@@ -100,7 +100,7 @@ async function loadFile(file) {
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const size = sum.kind === "spreadsheet"
       ? `${num(sum.rows)} rows in ${sum.sheets.length} sheet${sum.sheets.length === 1 ? "" : "s"}`
-      : `${num(sum.pages)} ${ext === ".pdf" ? "pages" : "parts"}`;
+      : `${num(sum.pages)} ${ext === ".pdf" ? "page" : "part"}${sum.pages === 1 ? "" : "s"}`;
     status(`Ready: ${file.name}, ${size}, about ${num(sum.document_tokens)} tokens of text. Read in ${secs} s.`, "good");
     showContents(sum);
     $("ask").disabled = false;
