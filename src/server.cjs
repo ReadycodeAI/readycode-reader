@@ -66,7 +66,7 @@ async function handle(line) {
   if (method === "tools/call") {
     try {
       const out = await callTool(params && params.name, params && params.arguments);
-      return send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(out, null, 1) }] } });
+      return send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(out) }] } });
     } catch (e) {
       return send({ jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: String((e && e.message) || e).slice(0, 400) }] } });
     }

@@ -518,9 +518,10 @@ const noul = (a) => (a && Number.isFinite(Number(a.noul)) ? Number(a.noul) : nul
 // are plain data and can be cached; a store is attached after loading.
 function recordFromPages(id, kind, pages) {
   return {
-    version: 6, id, kind, outline: pages.outline || [], pictures: pages.pictures || 0, pages: pages.length,
+    version: 7, id, kind, outline: pages.outline || [], pictures: pages.pictures || 0, pages: pages.length,
     textPages: pages.filter((p) => p.text.length >= 40).length,
-    pictureOnlyPages: pages.filter((p) => p.text.length < 40).map((p) => p.page),
+    // Only a PDF page can be picture-only; a short Word or text part is just short.
+    pictureOnlyPages: kind === ".pdf" ? pages.filter((p) => p.text.length < 40).map((p) => p.page) : [],
     passages: passagesOf(pages), printed: kind === ".pdf" ? printedPages(pages) : {},
   };
 }
@@ -726,7 +727,8 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     if (list) {
       list = list.slice(0, LIMITS.maxQuestions);
       const out = await Promise.all(list.map((q) => askOne(q, rec)));
-      return { answers: out.map((r, i) => ({ question: list[i], ...r })), total_evidence_tokens: out.reduce((s, r) => s + r.evidence_tokens, 0) };
+      // The document and its size are stated once, not repeated in every answer.
+      return { document: rec.id, document_tokens: rec.tokens, total_evidence_tokens: out.reduce((s, r) => s + r.evidence_tokens, 0), answers: out.map((r, i) => { const { document: _d, document_tokens: _t, ...rest } = r; return { question: list[i], ...rest }; }) };
     }
     if (!question) throw new Error("A question (or a questions list) is required.");
     return askOne(question, rec);

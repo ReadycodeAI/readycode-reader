@@ -87,7 +87,7 @@ async function open(file, id, ext, hash) {
   const cached = path.join(CACHE, `${hash}.json`);
   let rec = null;
   try { rec = JSON.parse(fs.readFileSync(cached, "utf8")); } catch (_) { rec = null; }
-  if (!rec || rec.version !== 6) {
+  if (!rec || rec.version !== 7) {
     rec = core.recordFromPages(id, ext, await readPages(file));
     fs.mkdirSync(CACHE, { recursive: true });
     fs.writeFileSync(cached, JSON.stringify(rec));

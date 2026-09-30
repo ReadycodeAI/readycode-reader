@@ -49,7 +49,7 @@ async function run(spec, file) {
     pass += ok;
     return { ok, question: q.q, verdict: a.verdict, evidence_tokens: a.evidence_tokens };
   });
-  return { document: spec.document.title, correct: `${pass}/${rows.length}`, document_tokens: res.answers[0].document_tokens, evidence_tokens: res.total_evidence_tokens, load_seconds: Number(loadSeconds.toFixed(1)), ask_seconds: Number(askSeconds.toFixed(1)), check_cost_usd: Number(cost.toFixed(4)), rows };
+  return { document: spec.document.title, correct: `${pass}/${rows.length}`, document_tokens: res.document_tokens, evidence_tokens: res.total_evidence_tokens, load_seconds: Number(loadSeconds.toFixed(1)), ask_seconds: Number(askSeconds.toFixed(1)), check_cost_usd: Number(cost.toFixed(4)), rows };
 }
 
 if (require.main === module) {
