@@ -1,4 +1,4 @@
-# ReadyCode Reader
+# ReadyCode Reader (readycode.AI)
 
 **Ask huge PDFs, Word documents and spreadsheets specific questions. Your AI gets only the passages that answer, with citations, instead of reading the whole file.**
 
