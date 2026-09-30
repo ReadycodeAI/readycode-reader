@@ -2,7 +2,7 @@
 
 **Ask huge PDFs, Word documents and spreadsheets specific questions. Your AI gets only the passages that answer, with citations, instead of reading the whole file.**
 
-[Website](https://readycode.ai/reader) · [Live browser demo](https://readycodeai.github.io/readycode-reader/) · [Install from npm](https://www.npmjs.com/package/@readycode/reader)
+[Website](https://readycode.ai/reader) · [Get updates and early access](https://readycode.ai/reader#get-started) · [Live browser demo](https://readycodeai.github.io/readycode-reader/) · [Install from npm](https://www.npmjs.com/package/@readycode/reader)
 
 [ReadyCode.AI](https://readycode.ai/reader) has contributed ReadyCode Reader - a free, open-source [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex and any other MCP client, and it also runs in a browser. It reads a file once on your computer. Then, for each question, it returns **only the passages that answer it**, with where they came from, plus checks on that evidence:
 
@@ -11,8 +11,6 @@
 - **Hidden instructions:** passages that try to instruct the AI reading them are flagged and treated as data only.
 - **Exact spreadsheet calculations:** "how many…", "which … appears most often", totals, averages and "list everyone who…" are computed by code over every row and come back as numbers, with the sheets, column and conditions used. A model never estimates them.
 - **Exact matches first:** a spreadsheet row holding the exact name you asked about comes before look-alikes ("Nat Becker" before "Prof. Nat Becker II"), and rows show only the columns the question needs.
-
-**[Try it in your browser](https://readycodeai.github.io/readycode-reader/)** (your file stays on your computer) · **[Get Reader updates and early access to the hosted version](https://readycode.ai/reader)** · [Install](#install-mcp)
 
 ## Standard AI vs Reader
 
