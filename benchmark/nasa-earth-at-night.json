@@ -1,0 +1,16 @@
+{
+  "document": {
+    "title": "Earth at Night (NASA, 2019), 200-page PDF",
+    "get_it": "NASA publication NP-2019-07-2739-HQ, free from nasa.gov (search \"Earth at Night ebook\"). The benchmark used earth_at_night_508.pdf."
+  },
+  "questions": [
+    { "q": "How many channels does the VIIRS instrument on Suomi NPP have, and what wavelength range do they cover?", "expect": ["22 channels", "412", "12,010"] },
+    { "q": "When did iceberg A-68 break away from the Larsen C ice shelf?", "expect": ["July 10 and July 12, 2017"] },
+    { "q": "What causes auroras?", "expect": ["charged particles"] },
+    { "q": "How many acres had the Okanogan Complex fire burned as of August 20?", "expect": ["91,314 acres"] },
+    { "q": "Over which periods was the book's cover image data acquired?", "expect": ["nine days in April 2012", "13 days in October 2012"] },
+    { "q": "How much did the Suomi NPP satellite cost to build?", "absent": ["cost"] },
+    { "q": "What had Shanghai's population grown to by 2016?", "expect": ["24 million by 2016"] },
+    { "q": "Which company built the VIIRS instrument?", "absent": ["Raytheon", "built by", "manufactured by"] }
+  ]
+}

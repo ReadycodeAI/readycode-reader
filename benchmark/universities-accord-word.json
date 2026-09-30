@@ -1,0 +1,19 @@
+{
+  "document": {
+    "title": "Australian Universities Accord – Final Report (Australian Government, 2024), Word .docx, about 263,000 tokens",
+    "get_it": "Published by the Australian Government Department of Education (search \"Australian Universities Accord Final Report docx\")."
+  },
+  "questions": [
+    { "q": "How many recommendations does the Final Report make?", "expect": ["47 recommendations"] },
+    { "q": "Who chaired the Australian Universities Accord Review Panel?", "expect": ["Mary O’Kane"] },
+    { "q": "Who else was on the Review Panel besides the chair?", "expect": ["Larissa Behrendt", "Shemara Wikramanayake"] },
+    { "q": "What tertiary attainment target does the report set for the working-age population by 2050?", "expect": ["80% by 2050"] },
+    { "q": "What share of Australians aged 25 to 34 should be university educated by 2050?", "expect": ["55% by 2050"] },
+    { "q": "What change to the timing of HELP indexation does the report propose?", "expect": ["deduct compulsory repayments first"] },
+    { "q": "What does the report recommend about the stipend for Higher Degree by Research candidates?", "expect": ["minimum stipend"] },
+    { "q": "What date was the report's covering letter signed?", "expect": ["28 December 2023"] },
+    { "q": "What new national body does the report propose to steer the tertiary education system?", "expect": ["Australian Tertiary Education Commission"] },
+    { "q": "Which university won the 2023 national rowing championship?", "absent": ["rowing", "championship"] },
+    { "q": "How much will the new Parliament House car park cost?", "absent": ["car park"] }
+  ]
+}

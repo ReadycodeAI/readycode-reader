@@ -1,0 +1,46 @@
+{
+  "name": "@readycode/reader",
+  "version": "0.1.0",
+  "description": "Ask huge PDFs, Word documents and spreadsheets specific questions: your AI gets only the passages that answer, with citations. A local MCP server for Claude Code, Cursor and Codex, plus a browser version.",
+  "bin": {
+    "readycode-reader": "src/server.cjs"
+  },
+  "main": "src/engine.cjs",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "pdf",
+    "docx",
+    "xlsx",
+    "rag",
+    "documents",
+    "citations",
+    "claude-code",
+    "cursor",
+    "codex",
+    "openrouter"
+  ],
+  "author": "ReadyCode (https://readycode.ai)",
+  "homepage": "https://readycode.ai/reader",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "pdfjs-dist": "^6.3.289"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "scripts": {
+    "build:web": "node web/build.cjs",
+    "test": "node test/engine.test.cjs"
+  }
+}

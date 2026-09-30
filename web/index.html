@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReadyCode Reader demo</title>
+<meta name="description" content="Try ReadyCode Reader on your own PDF, Word or Excel file. It runs in your browser; your file is never uploaded.">
+<style>
+  :root { --bg:#0b0d12; --panel:#141821; --line:#252b37; --text:#e8ebf1; --muted:#9aa3b2; --accent:#4f9dff; --good:#3ecf8e; --warn:#f2b84b; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#f7f8fa; --panel:#ffffff; --line:#e1e5ec; --text:#141821; --muted:#5b6475; --accent:#1f6fe0; --good:#12925b; --warn:#a86b00; --bad:#c7362f; } }
+  :root[data-theme="dark"] { --bg:#0b0d12; --panel:#141821; --line:#252b37; --text:#e8ebf1; --muted:#9aa3b2; --accent:#4f9dff; --good:#3ecf8e; --warn:#f2b84b; --bad:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:1.9rem; margin:0 0 6px; } h1 span { color:var(--accent); }
+  .lead { color:var(--muted); margin:0 0 24px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:16px; }
+  label { display:block; font-weight:600; margin-bottom:6px; }
+  .hint { color:var(--muted); font-size:.88rem; margin:6px 0 0; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:22px; text-align:center; cursor:pointer; }
+  #drop.over { border-color:var(--accent); }
+  #file { display:block; margin:10px auto 0; max-width:100%; color:var(--muted); }
+  input[type=password], textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+  textarea { min-height:110px; resize:vertical; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:11px 20px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  a { color:var(--accent); }
+  #status { margin:14px 0; min-height:1.5em; color:var(--muted); }
+  #status[data-tone=good], .verdict[data-tone=good] { color:var(--good); }
+  #status[data-tone=bad] { color:var(--bad); }
+  .verdict[data-tone=warn] { color:var(--warn); } .verdict[data-tone=muted] { color:var(--muted); }
+  .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+  .summary div { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .summary b { display:block; font-size:1.25rem; } .summary span { color:var(--muted); font-size:.85rem; }
+  .answer { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; }
+  .answer h3 { margin:0 0 4px; font-size:1.02rem; }
+  .verdict { margin:0 0 8px; font-weight:600; font-size:.9rem; }
+  .note { color:var(--warn); font-size:.9rem; margin:4px 0; }
+  blockquote { margin:10px 0 0; padding:10px 12px; border-left:3px solid var(--accent); background:var(--bg); border-radius:0 8px 8px 0; }
+  blockquote p { margin:4px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.92rem; }
+  cite { font-style:normal; color:var(--muted); font-size:.82rem; }
+  .flag { color:var(--bad); font-size:.85rem; }
+  footer { color:var(--muted); font-size:.85rem; margin-top:28px; }
+  #about ul { margin:6px 0 0; padding-left:20px; } #about li { margin:2px 0; overflow-wrap:anywhere; }
+  .contents { max-height:260px; overflow:auto; } .contents .l2 { margin-left:16px; color:var(--muted); } .contents span { color:var(--muted); font-size:.82rem; }
+  summary { cursor:pointer; color:var(--accent); }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .chip { background:transparent; color:var(--text); border:1px solid var(--line); font-weight:500; font-size:.9rem; padding:7px 12px; text-align:left; }
+  .chip:hover { border-color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ReadyCode <span>Reader</span> demo</h1>
+  <p class="lead">Ask a big PDF, Word or Excel file specific questions and see exactly what your AI would read: only the passages that answer, with where they came from. <b>Your file is read in this browser and never uploaded.</b></p>
+
+  <section class="panel">
+    <label for="file">1. Choose a file</label>
+    <div id="drop">Drop a .pdf, .docx, .xlsx, .txt, .md, .csv or .json file here (up to 500 MB)
+      <input id="file" type="file" accept=".pdf,.docx,.xlsx,.xlsm,.txt,.md,.csv,.json">
+    </div>
+  </section>
+
+  <section id="about" class="panel" hidden></section>
+
+  <section class="panel">
+    <label for="key">2. Your OpenRouter key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
+    <p class="hint">Used only to check passages with the Jev decision model, sent from this page straight to OpenRouter. It stays in this page's memory: it isn't saved, and it never reaches ReadyCode. A check costs about $0.0004 per question. No key? <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get one at OpenRouter</a>.</p>
+  </section>
+
+  <section class="panel">
+    <label for="questions">3. Your questions (one per line, up to 20)</label>
+    <textarea id="questions" placeholder="What is the warranty period?&#10;Which batteries does the remote take?"></textarea>
+    <p class="hint">Reader finds particular facts. For counts, totals or "list every row that…" in a spreadsheet, it tells you an exact calculation is needed instead of guessing.</p>
+  </section>
+
+  <button id="ask" disabled>Ask</button>
+  <p id="status" role="status" aria-live="polite">Choose a file to start.</p>
+  <section id="results"></section>
+
+  <footer>Free and open source. Use it inside Claude Code, Cursor or Codex: <a href="https://github.com/ReadycodeAI/readycode-reader">github.com/ReadycodeAI/readycode-reader</a> · <a href="https://readycode.ai">readycode.ai</a></footer>
+</main>
+<script type="module" src="./reader-web.js"></script>
+</body>
+</html>
