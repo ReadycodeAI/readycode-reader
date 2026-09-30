@@ -75,12 +75,18 @@ let loaded = null;
 
 function status(text, tone = "") { const el = $("status"); el.textContent = text; el.dataset.tone = tone; }
 
+// Every file chosen is read as its own document (two different files can
+// share a name and size), and only the latest choice may become the active
+// one: a slow earlier read that finishes later is dropped.
+let latest = 0;
 async function loadFile(file) {
   if (!file) return;
   const ext = (file.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
   try { core.kindOf(ext); } catch (err) { status(err.message, "bad"); return; }
   if (file.size > core.LIMITS.maxFileBytes) { status("That file is larger than 500 MB.", "bad"); return; }
-  const id = `${file.name}#${file.size}`;
+  const mine = ++latest;
+  const id = `${file.name}#${file.size}#${file.lastModified}#${mine}`;
+  if (loaded) reader.forget(loaded.id);
   loaded = null;
   $("ask").disabled = true;
   $("results").innerHTML = "";
@@ -96,6 +102,7 @@ async function loadFile(file) {
   }, 500);
   try {
     const sum = await reader.load(id, (prog) => open(file, id, ext, prog), { waitMs: 24 * 3600 * 1000 });
+    if (mine !== latest) { reader.forget(id); return; }
     loaded = { id, name: file.name, sum };
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const size = sum.kind === "spreadsheet"
@@ -105,7 +112,7 @@ async function loadFile(file) {
     showContents(sum);
     $("ask").disabled = false;
   } catch (err) {
-    status(`Could not read that file: ${err.message}`, "bad");
+    if (mine === latest) status(`Could not read that file: ${err.message}`, "bad");
   } finally {
     clearInterval(ticker);
   }
@@ -142,7 +149,16 @@ function showContents(sum) {
   } else {
     what = `<p class="hint">This file has no headings to list. Ask about anything you expect it to contain.</p>`;
   }
-  box.innerHTML = `<label>What's in this file</label>${what}${qs.length ? `<p class="hint">Try one (click to add it):</p><div class="chips">${qs.map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("")}</div>` : ""}`;
+  const warn = [];
+  if (Array.isArray(sum.picture_only_pages)) warn.push(`${num(sum.picture_only_pages.length)} page${sum.picture_only_pages.length === 1 ? " has" : "s have"} no text (pictures or scans only) and can't be searched: ${sum.picture_only_pages.slice(0, 12).join(", ")}${sum.picture_only_pages.length > 12 ? "…" : ""}.`);
+  if (sum.pictures_not_read) warn.push(`${num(sum.pictures_not_read)} picture${sum.pictures_not_read === 1 ? " is" : "s are"} not read; only the text is searched.`);
+  const cov = sum.coverage || {};
+  if (cov.not_read) warn.push(`Not read: ${cov.not_read.join(", ")} (${cov.not_read_note}).`);
+  if (cov.sheets_without_rows) warn.push(`No rows in: ${cov.sheets_without_rows.join(", ")}.`);
+  if (cov.repeated_header_rows_skipped) warn.push(`${num(cov.repeated_header_rows_skipped)} repeated header row${cov.repeated_header_rows_skipped === 1 ? " was" : "s were"} skipped.`);
+  for (const s of sum.sheets || []) if (s.header_note) warn.push(`${s.name}: ${s.header_note}`);
+  const warnings = warn.length ? `<ul class="warnings">${warn.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
+  box.innerHTML = `<label>What's in this file</label>${cov.read ? `<p class="hint" style="margin-top:0">Read: ${esc(cov.read)}.</p>` : ""}${warnings}${what}${qs.length ? `<p class="hint">Try one (click to add it):</p><div class="chips">${qs.map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("")}</div>` : ""}`;
   box.hidden = false;
   box.querySelectorAll(".chip").forEach((b) => b.addEventListener("click", () => {
     const t = $("questions");
@@ -160,19 +176,63 @@ const VERDICT = {
   low_confidence: ["Partly answered", "warn"],
   not_in_document: ["Not in the document", "muted"],
   needs_calculation: ["Needs an exact calculation", "warn"],
+  no_matching_text: ["No matching text found", "muted"],
   calculated: ["Calculated exactly from every row", "good"],
-  unchecked: ["Unchecked (no key)", "warn"],
+  unchecked: ["Unchecked: the check did not run", "warn"],
 };
 
-// Rankings and lists from a calculation, as a small table (first 20 lines).
-function calcTable(c) {
-  if (!c) return "";
-  let rows = [];
-  if (c.operation === "top") rows = c.result.map((g) => [g.value, `${num(g.rows)} rows${g.unique != null ? `, ${num(g.unique)} different ${c.unique_by}` : ""}`]);
-  else if (c.entries) rows = c.entries.map((x) => { const { at, rows: n, ...vals } = x; return [Object.values(vals).join(" · "), `${n != null ? `${num(n)} rows, first at ` : ""}${at}`]; });
-  if (!rows.length) return "";
-  return `<table class="calc">${rows.slice(0, 20).map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>${rows.length > 20 ? `<p class="hint">…and ${num(rows.length - 20)} more in the full result.</p>` : ""}`;
+// Rankings and lists from a calculation: the first 20 lines, the rest behind
+// "Show all", a CSV download, and a button to fetch the rest of a long list.
+function calcLines(c) {
+  if (!c) return [];
+  if (c.operation === "top") return c.result.map((g) => [g.value, `${num(g.rows)} rows${g.unique != null ? `, ${num(g.unique)} different ${c.unique_by}` : ""}`]);
+  if (c.entries) return c.entries.map((x) => { const { at, rows: n, ...vals } = x; return [Object.values(vals).join(" · "), `${n != null ? `${num(n)} rows, first at ` : ""}${at}`]; });
+  return [];
 }
+function calcTable(c, i) {
+  const rows = calcLines(c);
+  if (!rows.length) return "";
+  const tr = (list) => list.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("");
+  return `<table class="calc">${tr(rows.slice(0, 20))}</table>${rows.length > 20 ? `<details><summary>Show all ${num(rows.length)}</summary><table class="calc">${tr(rows.slice(20))}</table></details>` : ""}
+    <div class="tools"><button type="button" data-csv="${i}">Download CSV</button>${c.more ? `<button type="button" data-more="${i}">Get the full list (up to 1,000)</button>` : ""}</div>
+    ${c.more ? `<p class="hint">${esc(c.more)}</p>` : ""}`;
+}
+function csvOf(c) {
+  const cell = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  let head, body;
+  if (c.operation === "top") { head = ["value", "rows", ...(c.unique_by ? [`different ${c.unique_by}`] : [])]; body = c.result.map((g) => [g.value, g.rows, ...(c.unique_by ? [g.unique] : [])]); }
+  else { head = [...new Set(c.entries.flatMap((x) => Object.keys(x)))]; body = c.entries.map((x) => head.map((h) => x[h])); }
+  return [head, ...body].map((r) => r.map(cell).join(",")).join("\r\n");
+}
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+let shown = [];
+$("results").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button");
+  if (!b || !loaded) return;
+  const a = shown[Number(b.dataset.csv ?? b.dataset.more ?? b.dataset.run)];
+  if (!a) return;
+  try {
+    if (b.dataset.csv != null) return download("reader-result.csv", csvOf(a.calculation));
+    if (b.dataset.more != null) {
+      b.disabled = true;
+      const full = await reader.calculate({ ...a.calculate_args, n: 1000, document: loaded.id });
+      return download("reader-full-list.csv", csvOf(full));
+    }
+    if (b.dataset.run != null) {
+      // The visitor checked the suggested plan and chose to run it.
+      b.disabled = true;
+      const r = await reader.calculate({ ...a.suggested_calculate_args, document: loaded.id });
+      const { answer, ...calculation } = r;
+      a.calculation = calculation; a.calculate_args = a.suggested_calculate_args;
+      b.insertAdjacentHTML("afterend", `<p class="calc"><b>${esc(answer)}</b></p>${calcTable(calculation, b.dataset.run)}`);
+    }
+  } catch (err) { status(`Something went wrong: ${err.message}`, "bad"); }
+});
 
 async function askAll() {
   if (!loaded) return;
@@ -194,12 +254,13 @@ async function askAll() {
         <div><b>${secs} s</b><span>for ${questions.length} question${questions.length === 1 ? "" : "s"}</span></div>
         <div><b>$${(spent - before).toFixed(4)}</b><span>check cost on your key</span></div>
       </div>
-      ${res.answers.map((a) => {
+      ${(shown = res.answers).map((a, i) => {
         const [label, tone] = VERDICT[a.verdict] || [a.verdict, ""];
         return `<article class="answer">
           <h3>${esc(a.question)}</h3>
           <p class="verdict" data-tone="${tone}">${esc(label)}${a.answerable != null ? ` · answerable ${a.answerable}` : ""} · ${num(a.evidence_tokens)} tokens</p>
-          ${a.answer ? `<p class="calc"><b>${esc(a.answer)}</b></p><p class="hint">How: ${esc(a.plan)} Computed by code over every row${a.plan_checked === false ? " (plan not checked)" : ""}.</p>${calcTable(a.calculation)}` : ""}
+          ${a.answer ? `<p class="calc"><b>${esc(a.answer)}</b></p><p class="hint">How: ${esc(a.plan)} Computed by code over every row.</p>${calcTable(a.calculation, i)}` : ""}
+          ${a.suggested_plan ? `<p class="hint">Reader's reading of the question, not run yet: ${esc(a.suggested_plan)}</p><div class="tools"><button type="button" data-run="${i}">It matches, run it exactly</button></div>` : ""}
           ${a.note ? `<p class="note">${esc(a.note)}</p>` : ""}
           ${a.nearby_sections ? `<p class="note">Nearby sections that may continue the list: ${esc(a.nearby_sections.join("; "))}</p>` : ""}
           ${a.conflict ? `<p class="note">These passages may disagree; check each source.</p>` : ""}

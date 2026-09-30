@@ -31,9 +31,9 @@ For a question that asks for a complete list, the headings Reader returns in `ne
 
 | File | Correct | Document tokens | Tokens returned | Load | All questions | Check cost |
 |---|---|---|---|---|---|---|
-| NASA PDF | 8/8 | 42,282 | 3,487 | under 1 s (cached) | 1.6 s | $0.0027 |
-| Word report | 11/11 | 263,487 | 14,991 | under 1 s (cached) | 1.1 s | $0.0044 |
-| Excel workbook | 11/11 | 271,424,159 (estimate) | 2,494 | 16.2 s | 2.4 s | $0.0022 |
+| NASA PDF | 8/8 | 42,306 | 4,150 | 0.6 s | 1.9 s | $0.0028 |
+| Word report | 11/11 | 263,691 | 15,336 | under 1 s (cached) | 1.2 s | $0.0044 |
+| Excel workbook | 11/11 | 271,424,159 (estimate) | 2,494 | 14.7 s | 3.3 s | $0.0022 |
 
 On the workbook, the 8 lookups return only the columns each question needs (13–40 tokens each). The 3 calculations are exact:
 
@@ -43,7 +43,7 @@ On the workbook, the 8 lookups return only the columns each question needs (13�
 
 The list is 1,934 of the 2,494 tokens.
 
-Earlier results on the same day, before exact calculations, column trimming and the list change: Word 15,790 tokens returned; Excel 2,323 tokens returned, with the 3 calculation questions declined (`needs_calculation`) rather than answered.
+Since these runs Reader keeps short passages it used to drop (a short last line, a short page) and matches plural and singular forms, so the PDF and Word files return a little more text (3,487 → 4,150 and 14,991 → 15,336 tokens) with the same scores. Earlier results on the same day, before exact calculations, column trimming and the list change: Word 15,790 tokens returned; Excel 2,323 tokens returned, with the 3 calculation questions declined (`needs_calculation`) rather than answered.
 
 ## Standard AI vs Reader (NASA PDF)
 

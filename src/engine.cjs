@@ -80,16 +80,16 @@ async function readPages(file) {
   throw new Error("Spreadsheets are read with readXlsx.");
 }
 const readDocx = (file) => core.readDocxPages(diskArchive(file));
-const readXlsx = (file, prog) => core.readXlsxTable(diskArchive(file), prog);
+const readXlsx = (file, prog, opts) => core.readXlsxTable(diskArchive(file), prog, opts);
 
 // Documents are cached by content; spreadsheets are re-read (far larger).
-async function open(file, id, ext, hash, prog) {
+async function open(file, id, ext, hash, prog, opts) {
   const t0 = Date.now();
-  if (core.kindOf(ext) === "xlsx") return core.recordFromTable(id, ext, await readXlsx(file, prog), t0, prog);
+  if (core.kindOf(ext) === "xlsx") return core.recordFromTable(id, ext, await readXlsx(file, prog, opts), t0, prog);
   const cached = path.join(CACHE, `${hash}.json`);
   let rec = null;
   try { rec = JSON.parse(fs.readFileSync(cached, "utf8")); } catch (_) { rec = null; }
-  if (!rec || rec.version !== 7) {
+  if (!rec || rec.version !== 8) {
     rec = core.recordFromPages(id, ext, await readPages(file));
     fs.mkdirSync(CACHE, { recursive: true });
     fs.writeFileSync(cached, JSON.stringify(rec));
@@ -99,15 +99,17 @@ async function open(file, id, ext, hash, prog) {
 
 function createReader({ apiKey = () => process.env.OPENROUTER_API_KEY || "", log = null } = {}) {
   const reader = core.createReaderCore({ apiKey, log });
-  async function load(file) {
+  async function load(file, { headers = "auto" } = {}) {
+    if (!["auto", "first_row", "none"].includes(headers)) throw new Error('headers must be "auto", "first_row" or "none".');
     if (!file || !fs.existsSync(file)) throw new Error(`File not found: ${file}`);
     const stat = fs.statSync(file);
     if (stat.size > LIMITS.maxFileBytes) throw new Error(`File is larger than ${LIMITS.maxFileBytes / 1024 / 1024} MB.`);
     const ext = path.extname(file).toLowerCase();
     core.kindOf(ext);
     const hash = crypto.createHash("sha256").update(`${file}|${stat.size}|${stat.mtimeMs}`).digest("hex").slice(0, 16);
-    const id = `${path.basename(file).replace(/[^\w.-]+/g, "_")}#${hash.slice(0, 6)}`;
-    return reader.load(id, (prog) => open(file, id, ext, hash, prog));
+    // A different header choice is a different reading of the same file.
+    const id = `${path.basename(file).replace(/[^\w.-]+/g, "_")}#${hash.slice(0, 6)}${headers !== "auto" && core.kindOf(ext) === "xlsx" ? `~headers-${headers}` : ""}`;
+    return reader.load(id, (prog) => open(file, id, ext, hash, prog, { headers }));
   }
   return { load, ask: reader.ask, calculate: reader.calculate, list: reader.list };
 }

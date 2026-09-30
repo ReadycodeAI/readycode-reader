@@ -1,6 +1,6 @@
 {
   "name": "@readycode/reader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Ask huge PDFs, Word documents and spreadsheets specific questions: your AI gets only the passages that answer, with citations. A local MCP server for Claude Code, Cursor and Codex, plus a browser version.",
   "bin": {
     "readycode-reader": "src/server.cjs"
@@ -10,7 +10,9 @@
     "src",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "PRIVACY.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=20"

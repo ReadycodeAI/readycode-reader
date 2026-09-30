@@ -13,7 +13,7 @@ const env = (typeof process !== "undefined" && process.env) || {};
 const DECISIONS = "https://openrouter.ai/api/alpha/decisions";
 const DECIDER = env.READER_DECISION_MODEL || "typesafe/jev-1.13";
 const LIMITS = Object.freeze({
-  passageChars: 1200, searchTop: 20, keep: 8, notThere: 0.15, relevant: 0.5, maxQuestions: 20,
+  passageChars: 1200, searchTop: 20, keep: 8, notThere: 0.15, relevant: 0.5, confident: 0.5, maxQuestions: 20,
   maxFileBytes: 500 * 1024 * 1024,
   commonShare: 0.25, // a table term in more than this share of rows is too common to search by
   rowChars: 3000, // longest row text returned for one spreadsheet row
@@ -244,7 +244,11 @@ function excelDate(v, kind, date1904) {
 const looksLikeHeader = (texts) => texts.length > 0 && new Set(texts).size === texts.length
   && texts.every((t) => t.length <= 80 && !/^[-+\d.,:/ ()]+$/.test(t) && !/@/.test(t) && !/^(true|false)$/i.test(t));
 
-async function readXlsxTable(archive, prog = {}) {
+// Header rows: "auto" takes a first row of distinct, short labels as column
+// names, unless its values turn up again in their own columns (then it was
+// data: "Alice, London" above more people in London); "first_row" always
+// uses row 1; "none" treats every row as data (columns are cited by letter).
+async function readXlsxTable(archive, prog = {}, { headers: headerMode = "auto" } = {}) {
   const part = async (name) => (archive.has(name) ? archive.text(name) : "");
   const wb = await part("xl/workbook.xml");
   if (!wb) throw new Error("This .xlsx has no workbook part.");
@@ -286,8 +290,16 @@ async function readXlsxTable(archive, prog = {}) {
     prog.phase = "reading rows";
     prog.sheet = sh.name;
     sheets.push(sheet);
-    let lastR = 0;
-    const cols = [], vals = [];
+    let lastR = 0, recurs = 0;
+    const cols = [], vals = [], headerVal = [], held = [];
+    const record = (r, cs, vs) => {
+      rowSheet.push(si);
+      rowNumber.push(r);
+      rowStart.push(cellCol.length);
+      for (let j = 0; j < cs.length; j++) { cellCol.push(cs[j]); cellVal.push(vs[j]); }
+      sheet.rows++;
+      prog.rows = (prog.rows || 0) + 1;
+    };
     await archive.elements(sh.path, "row", (el) => {
       const rm = ROW_NUM.exec(el);
       const r = rm ? Number(rm[1]) : lastR + 1;
@@ -330,22 +342,32 @@ async function readXlsxTable(archive, prog = {}) {
       if (!sheet.headers) {
         sheet.headers = [];
         const texts = vals.map((i) => values[i]);
-        if (looksLikeHeader(texts)) {
-          cols.forEach((c, j) => { sheet.headers[c] = texts[j]; });
+        if (headerMode === "first_row" || (headerMode === "auto" && looksLikeHeader(texts))) {
+          cols.forEach((c, j) => { sheet.headers[c] = texts[j]; headerVal[c] = vals[j]; });
           sheet.headerCount = cols.length;
           sheet.headerRow = r;
+          held.push({ r, cols: [...cols], vals: [...vals] });
           return;
         }
       }
       // Tables stacked in one sheet repeat the header row; it is not a record.
-      if (sheet.headerCount === cols.length && cols.every((c, j) => sheet.headers[c] === values[vals[j]])) { sheet.repeatedHeaders++; return; }
-      rowSheet.push(si);
-      rowNumber.push(r);
-      rowStart.push(cellCol.length);
-      for (let j = 0; j < cols.length; j++) { cellCol.push(cols[j]); cellVal.push(vals[j]); }
-      sheet.rows++;
-      prog.rows = (prog.rows || 0) + 1;
+      if (sheet.headerCount === cols.length && cols.every((c, j) => sheet.headers[c] === values[vals[j]])) {
+        sheet.repeatedHeaders++;
+        if (headerMode === "auto" && held.length < 100000) held.push({ r, cols: [...cols], vals: [...vals] });
+        return;
+      }
+      if (sheet.headerCount && headerMode === "auto") for (let j = 0; j < cols.length; j++) if (headerVal[cols[j]] === vals[j]) recurs++;
+      record(r, cols, vals);
     }, onBytes);
+    // A "header" whose values reappear in their own columns was data after all.
+    if (sheet.headerCount && headerMode === "auto" && recurs > 0) {
+      sheet.headers = [];
+      sheet.headerCount = 0;
+      sheet.headerRow = undefined;
+      sheet.repeatedHeaders = 0;
+      sheet.headerDemoted = true;
+      for (const h of held) record(h.r, h.cols, h.vals);
+    }
     if (!sheet.headers) sheet.headers = [];
     prog.sheetsDone = sheets.length;
   }
@@ -359,17 +381,23 @@ async function readXlsxTable(archive, prog = {}) {
 
 // Passages of at most ~1,200 characters split at line breaks, so the checker
 // always judges a whole passage (a clipped passage once hid a real answer).
+// Short text is kept too ("The access code is 123456."): a short tail joins
+// the passage before it on the same page, and a short page is its own passage.
 function passagesOf(pages) {
   const out = [];
   for (const p of pages) {
-    if (p.text.length < 40) continue;
+    if (!p.text.trim()) continue;
     let piece = "";
     for (const line of p.text.split("\n")) {
       if (piece && piece.length + line.length > LIMITS.passageChars) { out.push({ page: p.page, label: p.label, text: piece.trim() }); piece = ""; }
       piece += (piece ? "\n" : "") + line;
       while (piece.length > LIMITS.passageChars + 200) { out.push({ page: p.page, label: p.label, text: piece.slice(0, LIMITS.passageChars) }); piece = piece.slice(LIMITS.passageChars); }
     }
-    if (piece.trim().length >= 40) out.push({ page: p.page, label: p.label, text: piece.trim() });
+    const last = piece.trim();
+    if (!last) continue;
+    const prev = out[out.length - 1];
+    if (last.length < 40 && prev && prev.page === p.page && prev.text.length + last.length < LIMITS.passageChars + 200) prev.text += `\n${last}`;
+    else out.push({ page: p.page, label: p.label, text: last });
   }
   return out;
 }
@@ -414,14 +442,17 @@ function printedPages(pages) {
 // ---------- search ----------
 const words = (s) => String(s).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
 const STOP = new Set("the a an of to and or in on for is are be by with what which how does do this that it as at from can not must should any its much many who when where".split(" "));
+// Plural and singular forms match each other ("cars" and "car", "policies"
+// and "policy").
+const stem = (w) => (w.length > 4 && w.endsWith("ies") ? `${w.slice(0, -3)}y` : w.length > 3 && w.endsWith("s") && !w.endsWith("ss") && !/\d/.test(w) ? w.slice(0, -1) : w);
 // Documents: BM25 over the passages.
 function makeSearch(passages) {
-  const toks = passages.map((c) => words(c.text).filter((w) => !STOP.has(w)));
+  const toks = passages.map((c) => words(c.text).filter((w) => !STOP.has(w)).map(stem));
   const avg = toks.reduce((s, t) => s + t.length, 0) / Math.max(1, passages.length);
   const df = new Map();
   for (const t of toks) for (const w of new Set(t)) df.set(w, (df.get(w) || 0) + 1);
   return (q, k) => {
-    const qs = words(q).filter((w) => !STOP.has(w));
+    const qs = words(q).filter((w) => !STOP.has(w)).map(stem);
     return passages.map((c, i) => {
       let s = 0;
       for (const w of qs) {
@@ -557,6 +588,14 @@ const plural = (n, one, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`
 const OPERATIONS = ["count", "distinct", "top", "sum", "average", "min", "max", "list"];
 const CONDITIONS = { equals: "is", contains: "contains", not_equals: "is not", above: "is above", below: "is below", at_least: "is at least", at_most: "is at most" };
 const PEOPLE_WORDS = /\b(people|persons?|everyone|everybody|who|whose|employees?|staff|customers?|clients?|contacts?|users?|members?|individuals?|workers?)\b/;
+// Words a calculation question may use without adding a condition.
+const CALC_WORDS = new Set(("how many much number numbers count counted counting total totals sum add up added combined average averages mean highest lowest largest " +
+  "smallest biggest maximum minimum max min most least fewest often common commonly frequent frequently popular appears appear appearing appeared occurs occur occurring " +
+  "shows show shown listed list lists listing name names named give me everyone everybody every all each people person persons employees employee staff customers customer " +
+  "clients client contacts contact users user members member individuals workers worker who whose which what are there is was were work works working worked employed file " +
+  "spreadsheet workbook sheet sheets tab tabs table data rows row records record entries entry lines line times time different distinct unique separate top bottom first " +
+  "overall whole entire have has had do does did of per by with called value values tell please find amount rank ranked ranking order sorted same across in").split(" "));
+const NEGATION = /\b(not|no|without|except|excluding|exclude|excludes|never|nor|neither|other than)\b|n't\b/;
 const COUNT_WORDS = /\bhow many\b|(?:^|\b(?:the|total|what is the|what's the))\s*number of\b|\bcount\b/;
 
 function makeCalculator(t, index) {
@@ -796,7 +835,7 @@ function makeCalculator(t, index) {
   }
   // plan(question): a plan for a plainly worded calculation question, or null.
   // Code reads the question; the checker only confirms the plan fits it.
-  function plan(question) {
+  function shape(question) {
     const q = norm(question);
     const found = namedValues(q);
     if (found.length > 3) return null;
@@ -843,6 +882,27 @@ function makeCalculator(t, index) {
     }
     return null;
   }
+  // Words of the question a plan does not account for ("solar", "above 150",
+  // "not"). A plan that leaves any out answers a different question, so it is
+  // never run on its own, whatever the checker says.
+  const known = new Set([...columnNames, ...t.sheets.map((x) => x.name)].flatMap((h) => words(norm(h))));
+  function unexplained(question, p) {
+    const q = norm(question);
+    let body = q.replace(/\b(?:top|bottom|first) \d{1,3}\b/g, " ");
+    for (const f of p.where || []) body = body.replace(norm(f.equals), " ");
+    if (p.sheet) body = body.replace(norm(p.sheet), " ");
+    const out = [];
+    const neg = NEGATION.exec(q);
+    if (neg) out.push(neg[0]);
+    for (const w of words(body)) {
+      if (STOP.has(w) || CALC_WORDS.has(w) || (w.length < 2 && !/\d/.test(w))) continue;
+      if ([w, w.replace(/ies$/, "y"), w.replace(/es$/, ""), w.replace(/s$/, "")].some((b) => known.has(b) || CALC_WORDS.has(b))) continue;
+      out.push(w);
+    }
+    return [...new Set(out)];
+  }
+  function read(question) { const p = shape(question); return p ? { plan: p, unexplained: unexplained(question, p) } : null; }
+  function plan(question) { const r = read(question); return r && !r.unexplained.length ? r.plan : null; }
   // A plan in plain words, for the checker to confirm it fits the question.
   function describe(p) {
     const where = (Array.isArray(p.where) ? p.where : p.where ? [p.where] : []).map((f) => { const op = Object.keys(CONDITIONS).find((o) => f[o] != null); return `${f.column} ${CONDITIONS[op]} "${f[op]}"`; });
@@ -866,7 +926,7 @@ function makeCalculator(t, index) {
     const cols = extra.length || (peopleColumn && mentioned.length) ? new Set([...(peopleColumn ? [peopleColumn] : []), ...valueCols, ...mentioned]) : null;
     return { values: found.map((x) => x.v), cols };
   }
-  return { run, plan, describe, focus, columns: columnNames };
+  return { run, plan, read, describe, focus, columns: columnNames };
 }
 
 // ---------- the decision model ----------
@@ -891,7 +951,7 @@ const noul = (a) => (a && Number.isFinite(Number(a.noul)) ? Number(a.noul) : nul
 // are plain data and can be cached; a store is attached after loading.
 function recordFromPages(id, kind, pages) {
   return {
-    version: 7, id, kind, outline: pages.outline || [], pictures: pages.pictures || 0, pages: pages.length,
+    version: 8, id, kind, outline: pages.outline || [], pictures: pages.pictures || 0, pages: pages.length,
     textPages: pages.filter((p) => p.text.length >= 40).length,
     // Only a PDF page can be picture-only; a short Word or text part is just short.
     pictureOnlyPages: kind === ".pdf" ? pages.filter((p) => p.text.length < 40).map((p) => p.page) : [],
@@ -995,11 +1055,25 @@ function tableStore(t, index) {
     search: (q, k, focus) => {
       let exact = [];
       if (focus && focus.values.length) {
-        let total = 0;
-        for (const v of focus.values) total += index.rowsOf(v).length;
-        if (total <= 50000) {
-          const rows = [...new Set(focus.values.flatMap((v) => Array.from(index.rowsOf(v))))].sort((a, b) => a - b);
-          exact = index.groupRows(rows, k).map((g) => ({ ...g, exact: true }));
+        // Rows holding every value the question names come first ("Nat
+        // Becker" at "Roob Inc"), then rows holding the rarer values; a value
+        // in a huge number of rows says little on its own and is not listed.
+        const score = new Map(), hits = new Map();
+        let used = 0;
+        for (const v of focus.values) {
+          const rows = index.rowsOf(v);
+          if (rows.length > 50000) continue;
+          used++;
+          const weight = 1 + 1 / rows.length;
+          for (const r of rows) { score.set(r, (score.get(r) || 0) + weight); hits.set(r, (hits.get(r) || 0) + 1); }
+        }
+        const rows = [...score.keys()].sort((a, b) => score.get(b) - score.get(a) || a - b);
+        // Grouped in tiers, so a full match is never crowded out by partial
+        // ones; only rows holding every named value count as exact.
+        for (const tier of [...new Set(rows.map((r) => hits.get(r)))].sort((a, b) => b - a)) {
+          if (exact.length >= k) break;
+          const groups = index.groupRows(rows.filter((r) => hits.get(r) === tier), k - exact.length);
+          exact.push(...groups.map((g) => ({ ...g, exact: tier === used })));
         }
       }
       const keys = new Set(exact.map((g) => g.key));
@@ -1038,7 +1112,12 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     if (rec.table) {
       return {
         document: rec.id, kind: "spreadsheet",
-        sheets: rec.table.sheets.map((s) => ({ name: s.name, rows: s.rows, columns: s.headerCount ? s.headers.map((h, c) => h || colName(c)).filter(Boolean) : "no header row (columns are cited by letter)" })),
+        sheets: rec.table.sheets.map((s) => ({
+          name: s.name, rows: s.rows,
+          columns: s.headerCount ? s.headers.map((h, c) => h || colName(c)).filter(Boolean) : "no header row (columns are cited by letter)",
+          ...(s.headerCount ? { header_row: s.headerRow } : s.headerDemoted ? { header_note: "Row 1 looked like column names but its values appear again below, so it was read as data." } : {}),
+        })),
+        header_note: "Column names are taken from each sheet's first row when it looks like labels. If that is wrong, load again with headers: \"none\" (every row is data) or \"first_row\".",
         rows: rec.store.size, coverage: coverage(rec.table), document_tokens: rec.tokens, document_tokens_note: TOKENS_NOTE, read_seconds: rec.readSeconds,
         ...(rec.store.size ? { example_row: rec.store.sample(0) } : {}),
         note: "Each row is a record, cited by sheet and row number. Lookups return matching rows (exact matches first). Counts, distinct values, rankings, totals, averages and lists of every matching row are computed exactly by code over all rows: ask them plainly, or use the calculate tool.",
@@ -1087,22 +1166,30 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
 
   const CALC_QUESTION = { type: "noul", instructions: "Does answering state.question need a calculation over the whole table: counting, adding up, averaging, ranking (highest, lowest, most) or listing every row that meets a condition, rather than finding particular rows or values?", criteria: { true: "It needs every row checked or combined.", false: "It asks about particular rows or values." } };
   const PLAN_QUESTION = { type: "noul", instructions: "Carried out exactly, does state.plan give what state.question asks for: the same rows, the same column and the same kind of result?", criteria: { true: "The plan answers the question as asked.", false: "It counts, filters or ranks something different from what is asked." } };
-  const CALC_NOTE = "This question needs an exact calculation over the whole table, and Reader could not turn it into one it is sure matches the question, so it gives no number. Use the calculate tool with an operation (count, distinct, top, sum, average, min, max or list), a column and conditions.";
+  const CALC_NOTE = "This question needs an exact calculation over the whole table, and Reader could not confirm a calculation that matches it, so it gives no number. Use the calculate tool with an operation (count, distinct, top, sum, average, min, max or list), a column and conditions.";
 
   // Calculation questions: code turns the question into a plan, the checker
-  // confirms the plan fits the question, and code computes the number.
-  const planFor = (question, rec) => { try { return rec.calc ? rec.calc.plan(question) : null; } catch (_) { return null; } };
-  function calculated(question, rec, plan, planScore, costUsd, t0) {
+  // confirms the plan fits the question, and code computes the number. A plan
+  // that leaves words of the question unexplained, or that the checker could
+  // not confirm, is never run: it is offered to the AI as a suggestion.
+  const readFor = (question, rec) => { try { return rec.calc ? rec.calc.read(question) : null; } catch (_) { return null; } };
+  function calculated(question, rec, plan, costUsd, t0) {
     let calc;
-    try { calc = rec.calc.run(plan); } catch (e) { return declined(question, rec, costUsd, t0, String((e && e.message) || e)); }
+    try { calc = rec.calc.run(plan); } catch (e) { return declined(question, rec, null, costUsd, t0, String((e && e.message) || e)); }
     const { answer, ...calculation } = calc;
+    return finish(question, rec, { verdict: "calculated", answerable: null, answer, plan: rec.calc.describe(plan), calculate_args: plan, calculation, passages: [] }, costUsd, t0);
+  }
+  function declined(question, rec, read, costUsd, t0, why) {
+    const reasons = [why, read && read.unexplained.length ? `the plan does not cover: ${read.unexplained.join(", ")}` : null].filter(Boolean);
     return finish(question, rec, {
-      verdict: "calculated", answerable: null, answer, plan: rec.calc.describe(plan),
-      ...(planScore == null ? { plan_checked: false } : {}),
-      calculation, passages: [],
+      verdict: "needs_calculation", answerable: null,
+      note: `${CALC_NOTE}${reasons.length ? ` (${reasons.join("; ")})` : ""}`,
+      ...(read ? { suggested_plan: rec.calc.describe(read.plan), suggested_calculate_args: read.plan, note_on_suggestion: "Reader's own reading of the question. Call calculate with these arguments only if they match the question; otherwise add the missing conditions." } : {}),
+      columns: rec.calc ? rec.calc.columns : [], passages: [],
     }, costUsd, t0);
   }
-  const declined = (question, rec, costUsd, t0, why) => finish(question, rec, { verdict: "needs_calculation", answerable: null, note: why ? `${CALC_NOTE} (${why})` : CALC_NOTE, columns: rec.calc ? rec.calc.columns : [], passages: [] }, costUsd, t0);
+  // A missing score is unknown, not a "no".
+  const score = (out, k) => (out.ok ? noul(out.answers[k]) : null);
 
   // "Who else was on the panel?": a complete list needs more passages than a fact.
   const LIST_QUESTION = /\b(who else|list|all the|all of the|every|each of|name the|name all|complete list|full list|members of)\b/i;
@@ -1113,22 +1200,25 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     const listQ = !rec.table && LIST_QUESTION.test(question);
     const focus = rec.table ? (() => { try { return rec.calc.focus(question); } catch (_) { return null; } })() : null;
     let wide = st.search(question, listQ ? LIMITS.searchTop + 10 : LIMITS.searchTop, focus);
-    const plan = rec.table ? planFor(question, rec) : null;
+    const read = rec.table ? readFor(question, rec) : null;
+    const plan = read && !read.unexplained.length ? read.plan : null;
     const planQs = plan ? { plan: PLAN_QUESTION } : {};
     const planState = plan ? { plan: rec.calc.describe(plan) } : {};
     const searched = rec.table ? { searched: `every row: ${plural(rec.store.size, "row")} in ${plural(rec.table.sheets.length, "sheet")}` } : {};
+    const confirmed = (out) => plan && (score(out, "plan") || 0) >= 0.5;
     if (!wide.length) {
       // A whole-table question often shares no words with any cell ("which
       // company appears most often?"); that is not "not in the document".
       if (rec.table) {
         const out = await decide(key(), { calc: CALC_QUESTION, ...planQs }, { question, columns: rec.calc.columns, ...planState });
-        if (!out.ok && plan) return calculated(question, rec, plan, null, 0, t0);
-        if (out.ok && (noul(out.answers.calc) || 0) >= 0.5) {
-          return plan && (noul(out.answers.plan) || 0) >= 0.5 ? calculated(question, rec, plan, noul(out.answers.plan), out.costUsd, t0) : declined(question, rec, out.costUsd, t0);
-        }
-        return finish(question, rec, { verdict: "not_in_document", answerable: 0, ...searched, passages: [] }, out.ok ? out.costUsd : 0, t0);
+        const cost = out.ok ? out.costUsd : 0;
+        if (!out.ok && read) return declined(question, rec, read, 0, t0, `the check could not run: ${out.error}`);
+        if ((score(out, "calc") || 0) >= 0.5) return confirmed(out) ? calculated(question, rec, plan, cost, t0) : declined(question, rec, read, cost, t0);
+        return finish(question, rec, { verdict: "not_in_document", answerable: 0, ...searched, passages: [] }, cost, t0);
       }
-      return finish(question, rec, { verdict: "not_in_document", answerable: 0, passages: [] }, 0, t0);
+      // No passage shares a word with the question. The document may still
+      // say it in other words ("automobile" for "car"), so this is not proof.
+      return finish(question, rec, { verdict: "no_matching_text", answerable: null, note: "No passage shares any searchable word with this question. The document may use different words (a synonym, an abbreviation or another spelling): ask again with those before saying it is not in the document.", passages: [] }, 0, t0);
     }
     // Spreadsheet rows show only the columns the question needs; rows that
     // look the same once trimmed are returned once.
@@ -1158,33 +1248,37 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     qs.enough = { type: "noul", instructions: "Taken together, do state.passages contain what is needed to answer state.question?", criteria: { true: "The answer can be written from these passages alone.", false: "Something the answer needs is missing." } };
     qs.conflict = { type: "noul", instructions: "Considering only the passages in state.passages that are about exactly the thing state.question asks about (the same person, item, date or measure), do two of them give different values for it?", criteria: { true: "Two passages about the same thing give different values for it.", false: "They agree, only one value is given, or the differing passages are about different things." } };
     if (rec.table) Object.assign(qs, { calc: CALC_QUESTION }, planQs);
-    const out = await decide(key(), qs, { question, passages: texts, ...planState });
-    // Without the checker a plan made from plain calculation wording is still
-    // computed exactly, and marked as unchecked.
-    if (!out.ok && plan) return calculated(question, rec, plan, null, 0, t0);
+    let out = await decide(key(), qs, { question, passages: texts, ...planState });
+    // An answer that lacks the overall verdict or most passage scores is
+    // treated as no check at all, not as a row of "no"s.
+    if (out.ok) {
+      const missing = wide.filter((_, n) => score(out, `p${n}`) == null).length;
+      if (score(out, "enough") == null || missing > wide.length / 2) out = { ok: false, error: "the check returned incomplete answers", costUsd: out.costUsd };
+    }
+    const cost = out.costUsd || 0;
     const keep = listQ ? LIMITS.keep * 2 : LIMITS.keep;
     let kept, answerable = null, conflict = null, anyRelevant = false, calc = null, relevantKept = 0;
     const injected = new Set();
     if (out.ok) {
-      answerable = noul(out.answers.enough);
-      conflict = noul(out.answers.conflict);
-      calc = noul(out.answers.calc);
-      const scored = wide.map((g, n) => ({ g, n, s: noul(out.answers[`p${n}`]) || 0 }));
-      wide.forEach((g, n) => { const v = noul(out.answers[`i${n}`]); if (v != null && v >= 0.5) injected.add(g.i); });
-      anyRelevant = scored.some((x) => x.s >= LIMITS.relevant);
-      // Exact matches first, then most relevant; a top-3 search result needs some relevance too.
-      const relevant = scored.filter((x) => x.s >= LIMITS.relevant || (x.n < 3 && x.s >= 0.2));
-      const chosen = (relevant.length ? relevant : scored.slice(0, 3)).sort((a, b) => (b.g.exact ? 1 : 0) - (a.g.exact ? 1 : 0) || b.s - a.s || a.n - b.n).slice(0, keep);
-      relevantKept = chosen.filter((x) => x.s >= LIMITS.relevant).length;
+      answerable = score(out, "enough");
+      conflict = score(out, "conflict");
+      calc = score(out, "calc");
+      const scored = wide.map((g, n) => ({ g, n, s: score(out, `p${n}`) }));
+      wide.forEach((g, n) => { const v = score(out, `i${n}`); if (v != null && v >= 0.5) injected.add(g.i); });
+      anyRelevant = scored.some((x) => x.s != null && x.s >= LIMITS.relevant);
+      // Exact matches first, then most relevant; a top-3 search result needs
+      // some relevance too (or an unknown score).
+      const relevant = scored.filter((x) => (x.s != null && x.s >= LIMITS.relevant) || (x.n < 3 && (x.s == null || x.s >= 0.2)));
+      const chosen = (relevant.length ? relevant : scored.slice(0, 3)).sort((a, b) => (b.g.exact ? 1 : 0) - (a.g.exact ? 1 : 0) || (b.s || 0) - (a.s || 0) || a.n - b.n).slice(0, keep);
+      relevantKept = chosen.filter((x) => x.s != null && x.s >= LIMITS.relevant).length;
       kept = chosen.map((x) => x.g);
     } else kept = wide.slice(0, keep);
     // A whole-table calculation is never answered from a handful of rows.
-    if (calc != null && calc >= 0.5) {
-      return plan && (noul(out.answers.plan) || 0) >= 0.5 ? calculated(question, rec, plan, noul(out.answers.plan), out.costUsd, t0) : declined(question, rec, out.costUsd, t0);
-    }
-    // "Not in the document" only when nothing was judged relevant either.
+    if (calc != null && calc >= 0.5) return confirmed(out) ? calculated(question, rec, plan, cost, t0) : declined(question, rec, read, cost, t0);
+    // "Not in the document" only when nothing was judged relevant either;
+    // anything short of a confident "enough" is low confidence.
     const notThere = answerable != null && answerable < LIMITS.notThere && !anyRelevant;
-    const low = answerable != null && answerable < LIMITS.notThere && anyRelevant;
+    const low = answerable != null && !notThere && answerable < LIMITS.confident;
     const passages = notThere ? [] : kept.map((g) => ({
       ...st.cite(g.i),
       ...(g.exact != null ? { match: g.exact ? "exact" : "partial" } : {}),
@@ -1199,15 +1293,18 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     return finish(question, rec, {
       verdict: notThere ? "not_in_document" : answerable == null ? "unchecked" : low ? "low_confidence" : "answer_from_passages",
       answerable: answerable == null ? null : Number(answerable.toFixed(2)),
-      ...(low ? { note: "The passages look relevant but may not fully answer the question; answer only what they state." } : {}),
+      ...(low ? { note: "These passages may not fully answer the question; answer only what they state, and say what is missing." } : {}),
+      ...(notThere && !rec.table ? { note: "None of the passages checked supports an answer. Say the document does not appear to contain it; it may use other words." } : {}),
       ...(nearby.length ? { nearby_sections: nearby, note_on_lists: "This asks for a complete list. These passages sit among sections with the headings in nearby_sections, which may name further items; include those that belong, and ask about any whose text you need." }
         : listQ && !notThere && answerable != null && answerable < 0.8 ? { note_on_lists: "This asks for a complete list. These passages hold the items found, but the document may name more elsewhere (an appendix or a later section); say the list may be incomplete, or ask about that part." } : {}),
       ...(disagree ? { conflict: "these passages may give different values; report each with its source" } : {}),
       ...(cols && !notThere ? { columns_shown: [...cols] } : {}),
       ...(notThere ? searched : {}),
+      // Unchecked, a calculation question gets the plan Reader would run, never a number.
+      ...(!out.ok && read ? { suggested_plan: rec.calc.describe(read.plan), suggested_calculate_args: read.plan, note_on_suggestion: "The check could not run, so no calculation was done. If this plan matches the question, call calculate with these arguments." } : {}),
       passages,
       ...(out.ok ? {} : { check_error: out.error }),
-    }, out.ok ? out.costUsd : 0, t0);
+    }, cost, t0);
   }
 
   function finish(question, rec, r, costUsd, t0) {
@@ -1272,7 +1369,9 @@ function createReaderCore({ apiKey = "", log = null } = {}) {
     ...[...docs.values()].map((d) => ({ document: d.id, ...(d.table ? { kind: "spreadsheet", rows: d.store.size } : { pages: d.pages }), document_tokens: d.tokens })),
     ...[...reading.keys()].map((id) => ({ document: id, status: "still_reading" })),
   ];
-  return { load, ask, calculate, list, has: (id) => docs.has(id) || reading.has(id), progress: (id) => progress.get(id) || null };
+  // A document no longer needed (the browser page drops a file replaced by another).
+  const forget = (id) => { docs.delete(id); if (lastId === id) lastId = null; };
+  return { load, ask, calculate, list, forget, has: (id) => docs.has(id) || reading.has(id), progress: (id) => progress.get(id) || null };
 }
 
 module.exports = {

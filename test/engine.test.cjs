@@ -36,6 +36,25 @@ const docXml = `<?xml version="1.0"?><w:document xmlns:w="w"><w:body>${[
   p("Care", "Heading1"), p("Wipe the glass with a soft cloth; never use abrasive cleaners."),
 ].join("")}</w:body></w:document>`;
 
+// A stand-in for the Jev checker, so the whole path runs offline. It says yes
+// to every passage, "enough", the calculation question and the plan, unless
+// told otherwise: answer(key, state) returns a score, or undefined to leave
+// that answer out.
+function fakeJev(answer = () => null) {
+  const real = global.fetch;
+  global.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const answers = {};
+    for (const k of Object.keys(body.questions)) {
+      const own = answer(k, body.state);
+      const v = own !== null ? own : k === "conflict" || /^i\d/.test(k) ? 0 : k === "calc" ? (/how many|most|list|total|average|everyone/i.test(body.state.question) ? 0.9 : 0.1) : 0.9;
+      if (v !== undefined) answers[k] = { noul: v };
+    }
+    return { ok: true, status: 200, json: async () => ({ answers, usage: { cost: 0 } }) };
+  };
+  return () => { global.fetch = real; };
+}
+
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
@@ -69,6 +88,50 @@ test("printed page numbers: a constant offset for main pages, roman numerals for
   assert.strictEqual(pr[1], undefined);
   assert.strictEqual(e.romanValue("xiv"), 14);
   assert.strictEqual(e.romanValue("hello"), null);
+});
+
+test("short text is never dropped: a short page and a short last line are both searchable", async () => {
+  const core = require("../src/core.cjs");
+  const rec = core.withStore(core.recordFromPages("t", ".txt", [
+    { page: 1, label: "part 1", text: "The access code is 123456." },
+    { page: 2, label: "part 2", text: `${"A long line about the office opening hours and the parking rules for visitors. ".repeat(20)}\nCall 555-0101.` },
+  ]));
+  const all = rec.passages.map((p) => p.text).join("\n");
+  assert.match(all, /The access code is 123456\./);
+  assert.match(all, /Call 555-0101\./);
+  const restore = fakeJev((k, state) => (k.startsWith("p") && /^p\d+$/.test(k) ? (/123456/.test(state.passages[Number(k.slice(1))]) ? 0.95 : 0.05) : null));
+  const reader = core.createReaderCore({ apiKey: "test" });
+  await reader.load("t", async () => rec);
+  const r = await reader.ask({ question: "What is the access code?" });
+  assert.strictEqual(r.verdict, "answer_from_passages");
+  assert.match(r.passages[0].text, /123456/);
+  const none = await reader.ask({ question: "What is the car price?" });
+  assert.strictEqual(none.verdict, "no_matching_text", "no shared words is not proof of absence");
+  assert.match(none.note, /different words/);
+  restore();
+});
+
+test("plural and singular forms match", () => {
+  const passages = [{ page: 1, text: "Company policies cover leave." }, { page: 2, text: "Cars are parked outside." }];
+  const find = e.makeSearch(passages);
+  assert.strictEqual(find("What is the leave policy?", 1)[0].page, 1);
+  assert.strictEqual(find("Where is the car?", 1)[0].page, 2);
+});
+
+test("the MCP server answers malformed messages with errors and keeps running", async () => {
+  const { spawn } = require("child_process");
+  const child = spawn(process.execPath, [path.join(__dirname, "..", "src", "server.cjs")], { stdio: ["pipe", "pipe", "ignore"] });
+  const lines = [];
+  child.stdout.on("data", (d) => lines.push(...String(d).split("\n").filter(Boolean)));
+  child.stdin.write(['null', '[1]', '{bad', '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}', '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":null}', '{"jsonrpc":"2.0","id":3,"method":"ping"}'].join("\n") + "\n");
+  for (let i = 0; i < 50 && lines.length < 6; i++) await new Promise((r) => setTimeout(r, 50));
+  child.kill();
+  const msgs = lines.map((l) => JSON.parse(l));
+  assert.strictEqual(msgs.length, 6);
+  assert.deepStrictEqual(msgs.slice(0, 3).map((m) => m.error.code), [-32600, -32600, -32700]);
+  assert.strictEqual(msgs[3].result.protocolVersion, "2025-06-18", "an unknown version is offered the newest supported one");
+  assert.strictEqual(msgs[4].error.code, -32602);
+  assert.deepStrictEqual(msgs[5].result, {}, "still running after all of that");
 });
 
 test("search finds the passage that matches the question words", () => {
@@ -146,7 +209,8 @@ const staffFile = () => {
 
 test("calculations: counts of rows and of people, rankings, distinct values, sums and averages, computed over every row", async () => {
   const file = staffFile();
-  const reader = e.createReader({ apiKey: "" });
+  const restore = fakeJev();
+  const reader = e.createReader({ apiKey: "test" });
   const loaded = await reader.load(file);
   assert.strictEqual(loaded.rows, 8);
   assert.strictEqual(loaded.coverage.read, "all 8 rows in 2 sheets");
@@ -154,7 +218,7 @@ test("calculations: counts of rows and of people, rankings, distinct values, sum
 
   const count = await ask("How many people work at Roob Inc?");
   assert.strictEqual(count.verdict, "calculated");
-  assert.strictEqual(count.plan_checked, false, "no key: the plan is computed but marked unchecked");
+  assert.deepStrictEqual(count.calculate_args.where, [{ column: "Company", equals: "Roob Inc" }]);
   assert.strictEqual(count.calculation.result, 5, "case and spacing differences are the same company");
   assert.strictEqual(count.calculation.unique, 4, "Ada Lovelace appears twice");
   assert.deepStrictEqual(count.calculation.matching_rows_by_sheet, { Staff: 3, "Contractors (2)": 2 });
@@ -185,7 +249,99 @@ test("calculations: counts of rows and of people, rankings, distinct values, sum
   assert.strictEqual(look.passages[0].text, "Name: Nat Becker | Job Title: Clerk");
   assert.strictEqual(look.passages[0].identical_records, 2, "rows the same in the columns shown come back once");
   assert.ok(look.passages.some((p) => p.match === "partial" && /Prof\. Nat Becker II/.test(p.text)));
+  restore();
   fs.unlinkSync(file);
+});
+
+test("a calculation plan that leaves out part of the question is never run, even when the checker approves it", async () => {
+  const file = staffFile();
+  const restore = fakeJev();
+  const reader = e.createReader({ apiKey: "test" });
+  await reader.load(file);
+  for (const [question, missing] of [
+    ["How many people have a Salary above 150?", /above, 150/],
+    ["How many people do not work at Roob Inc?", /not/],
+    ["How many people at Roob Inc work on solar panels?", /solar, panels/],
+  ]) {
+    const r = await reader.ask({ question });
+    assert.strictEqual(r.verdict, "needs_calculation", question);
+    assert.match(r.note, missing, question);
+    assert.ok(r.suggested_calculate_args, "the partial plan is offered for the AI to complete");
+    assert.strictEqual(r.calculation, undefined, "no number is given");
+  }
+  restore();
+  fs.unlinkSync(file);
+});
+
+test("without the checker, a calculation question gets a suggested plan, never a number", async () => {
+  const file = staffFile();
+  const reader = e.createReader({ apiKey: "" });
+  await reader.load(file);
+  const r = await reader.ask({ question: "How many people work at Roob Inc?" });
+  assert.notStrictEqual(r.verdict, "calculated");
+  assert.strictEqual(r.calculation, undefined);
+  assert.deepStrictEqual(r.suggested_calculate_args.where, [{ column: "Company", equals: "Roob Inc" }]);
+  const exact = await reader.calculate(r.suggested_calculate_args);
+  assert.strictEqual(exact.result, 5, "the AI can run the suggestion with calculate");
+  fs.unlinkSync(file);
+});
+
+test("a name and a company together find that person first, however many others share the company", async () => {
+  const file = path.join(os.tmpdir(), `reader-namecomp-${process.pid}.xlsx`);
+  const rows = [["Name", "Company", "Phone"]];
+  for (let i = 0; i < 300; i++) rows.push([`Person ${i} Smith`, "Acme", `555-${1000 + i}`]);
+  rows.push(["Bob Target", "Acme", "555-9999"], ["Bob Target", "Globex", "555-7777"]);
+  workbook(file, [{ name: "People", rows }]);
+  const restore = fakeJev();
+  const reader = e.createReader({ apiKey: "test" });
+  await reader.load(file);
+  for (const question of ["What is Bob Target's phone?", "What is the phone of Bob Target at Acme?"]) {
+    const r = await reader.ask({ question });
+    assert.match(r.passages[0].text, /Bob Target/, question);
+    assert.strictEqual(r.passages[0].match, "exact", question);
+  }
+  const both = await reader.ask({ question: "What is the phone of Bob Target at Acme?" });
+  assert.match(both.passages[0].text, /555-9999/, "the row matching both name and company comes first");
+  restore();
+  fs.unlinkSync(file);
+});
+
+test("missing checker answers are unknown, not a no; a weak answerable score is low confidence", async () => {
+  const file = staffFile();
+  const reader = e.createReader({ apiKey: "test" });
+  await reader.load(file);
+  let restore = fakeJev((k) => (k === "enough" ? undefined : null));
+  const noEnough = await reader.ask({ question: "What is the job title of Grace Hopper?" });
+  assert.strictEqual(noEnough.verdict, "unchecked");
+  assert.match(noEnough.check_error, /incomplete/);
+  assert.match(noEnough.passages[0].text, /Grace Hopper/);
+  restore();
+  restore = fakeJev((k) => (k === "enough" ? 0.2 : null));
+  const weak = await reader.ask({ question: "What is the job title of Grace Hopper?" });
+  assert.strictEqual(weak.verdict, "low_confidence", "0.20 is not a confident answer");
+  restore();
+  fs.unlinkSync(file);
+});
+
+test("spreadsheets without a header row keep their first record; the choice is reported and can be overridden", async () => {
+  const file = path.join(os.tmpdir(), `reader-noheader-${process.pid}.xlsx`);
+  workbook(file, [{ name: "Cities", rows: [["Alice", "London"], ["Bob", "Paris"], ["Carol", "London"]] }]);
+  const reader = e.createReader({ apiKey: "" });
+  const auto = await reader.load(file);
+  assert.strictEqual(auto.rows, 3, "Alice is a record, not a column name");
+  assert.match(auto.sheets[0].header_note, /read as data/);
+  const forced = await reader.load(file, { headers: "first_row" });
+  assert.strictEqual(forced.rows, 2);
+  assert.deepStrictEqual(forced.sheets[0].columns, ["Alice", "London"]);
+  const none = await reader.load(file, { headers: "none" });
+  assert.strictEqual(none.rows, 3);
+  const labelled = path.join(os.tmpdir(), `reader-header-${process.pid}.xlsx`);
+  workbook(labelled, [{ name: "Cities", rows: [["Name", "City"], ["Bob", "Paris"], ["Carol", "London"]] }]);
+  const normal = await reader.load(labelled);
+  assert.strictEqual(normal.rows, 2);
+  assert.strictEqual(normal.sheets[0].header_row, 1);
+  fs.unlinkSync(file);
+  fs.unlinkSync(labelled);
 });
 
 test("calculate: explicit plans, people rather than rows, one sheet, clear errors", async () => {

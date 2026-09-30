@@ -51,12 +51,25 @@
   .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
   .chip { background:transparent; color:var(--text); border:1px solid var(--line); font-weight:500; font-size:.9rem; padding:7px 12px; text-align:left; }
   .chip:hover { border-color:var(--accent); }
+  .topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-bottom:22px; font-size:.92rem; }
+  .topbar .brand { color:var(--text); font-weight:700; text-decoration:none; }
+  .topbar .brand span { color:var(--muted); font-weight:400; }
+  a.cta { display:inline-block; background:var(--accent); color:#fff; border-radius:8px; padding:9px 16px; font-weight:600; text-decoration:none; }
+  a.cta.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  .ctas { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  .warnings { color:var(--warn); font-size:.9rem; margin:8px 0 0; padding-left:20px; }
+  .tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .tools button { background:transparent; color:var(--accent); border:1px solid var(--line); padding:6px 12px; font-size:.85rem; font-weight:500; }
 </style>
 </head>
 <body>
 <main>
+  <nav class="topbar">
+    <a class="brand" href="https://readycode.ai/reader">ReadyCode <span>· tools that make AI read less and answer better</span></a>
+    <a class="cta" href="https://readycode.ai/reader#get-started">Get updates &amp; early access</a>
+  </nav>
   <h1>ReadyCode <span>Reader</span> demo</h1>
-  <p class="lead">Ask a big PDF, Word or Excel file specific questions and see exactly what your AI would read: only the passages that answer, with where they came from. <b>Your file is read in this browser and never uploaded.</b></p>
+  <p class="lead">Ask a big PDF, Word or Excel file specific questions and see exactly what your AI would read: only the passages that answer, with where they came from, or an exact count from every row of a spreadsheet. <b>Your file is read in this browser and never uploaded.</b></p>
 
   <section class="panel">
     <label for="file">1. Choose a file</label>
@@ -70,20 +83,30 @@
   <section class="panel">
     <label for="key">2. Your OpenRouter key</label>
     <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-…">
-    <p class="hint">Used only to check passages with the Jev decision model, sent from this page straight to OpenRouter. It stays in this page's memory: it isn't saved, and it never reaches ReadyCode. A check costs about $0.0004 per question. No key? <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get one at OpenRouter</a>.</p>
+    <p class="hint">Used to check passages with the Jev decision model. For each question, this page sends the question and the short candidate passages or rows it found (up to about 20) straight to OpenRouter; your whole file is never sent. The key stays in this page's memory: it isn't saved, and it never reaches ReadyCode. A check costs about $0.0004 per question. <a href="https://github.com/ReadycodeAI/readycode-reader/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy</a> · No key? <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get one at OpenRouter</a>.</p>
   </section>
 
   <section class="panel">
     <label for="questions">3. Your questions (one per line, up to 20)</label>
     <textarea id="questions" placeholder="What is the warranty period?&#10;Which batteries does the remote take?"></textarea>
-    <p class="hint">Reader finds particular facts. For counts, totals or "list every row that…" in a spreadsheet, it tells you an exact calculation is needed instead of guessing.</p>
+    <p class="hint">Reader finds particular facts. In a spreadsheet, counts, rankings, totals and "list everyone who…" are calculated exactly from every row. If Reader can't be sure it has understood a calculation, it says so and shows the plan instead of guessing.</p>
   </section>
 
   <button id="ask" disabled>Ask</button>
   <p id="status" role="status" aria-live="polite">Choose a file to start.</p>
   <section id="results"></section>
 
-  <footer>Free and open source. Use it inside Claude Code, Cursor or Codex: <a href="https://github.com/ReadycodeAI/readycode-reader">github.com/ReadycodeAI/readycode-reader</a> · <a href="https://readycode.ai">readycode.ai</a></footer>
+  <section class="panel" id="next">
+    <label>Use Reader inside your AI, and hear what's next</label>
+    <p class="hint" style="margin-top:0">Reader is free and open source. Install it in Claude Code, Cursor or Codex so your AI reads big files this way on its own. Sign up at ReadyCode for Reader updates, new tools, and early access to the hosted version (no key or setup).</p>
+    <div class="ctas">
+      <a class="cta" href="https://readycode.ai/reader#get-started">Get updates &amp; early access</a>
+      <a class="cta ghost" href="https://readycode.ai/reader#install">Install in your AI</a>
+      <a class="cta ghost" href="https://github.com/ReadycodeAI/readycode-reader">View on GitHub</a>
+    </div>
+  </section>
+
+  <footer>Made by <a href="https://readycode.ai/reader">ReadyCode</a>. Free and open source: <a href="https://github.com/ReadycodeAI/readycode-reader">GitHub</a> · <a href="https://github.com/ReadycodeAI/readycode-reader/blob/main/PRIVACY.md">Privacy</a></footer>
 </main>
 <script type="module" src="./reader-web.js"></script>
 </body>
