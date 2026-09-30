@@ -378,6 +378,72 @@ test("rows that differ only in columns not shown are counted exactly, however ma
   fs.unlinkSync(file);
 });
 
+test("a first row is only taken as column names with evidence; otherwise it stays a record", async () => {
+  const reader = e.createReader({ apiKey: "" });
+  const load = async (name, rows, opts) => {
+    const file = path.join(os.tmpdir(), `reader-${name}-${process.pid}.xlsx`);
+    workbook(file, [{ name: "S", rows }]);
+    const r = await reader.load(file, opts);
+    fs.unlinkSync(file);
+    return r;
+  };
+  const people = await load("people", [["Alice", "London"], ["Bob", "Paris"], ["Carol", "Rome"]]);
+  assert.strictEqual(people.rows, 3, "Alice is kept as a record");
+  assert.match(people.sheets[0].header_note, /^Row 1 \(Alice, London\) was read as data: nothing marks it as column names/);
+  const grams = await load("grams", [["Fruit", "Grams"], ["Apple", 120], ["Pear", 95], ["Plum", 60]]);
+  assert.strictEqual(grams.rows, 3);
+  assert.deepStrictEqual(grams.sheets[0].columns, ["Fruit", "Grams"], "numbers under a text label mark a header");
+  const colours = await load("colours", [["Fruit", "Colour"], ["Apple", "Red"], ["Pear", "Green"]]);
+  assert.strictEqual(colours.rows, 3, "no evidence either way: nothing is dropped");
+  assert.match(colours.sheets[0].header_note, /load again with headers: "first_row"/);
+  const forced = await load("colours2", [["Fruit", "Colour"], ["Apple", "Red"], ["Pear", "Green"]], { headers: "first_row" });
+  assert.strictEqual(forced.rows, 2);
+  const labelled = await load("labelled", [["Customer", "Region"], ["Acme", "North"], ["Globex", "South"]]);
+  assert.strictEqual(labelled.rows, 2, "label words mark a header");
+});
+
+test("a check that skips passages never concludes absence; skipped passages come back marked", async () => {
+  const core = require("../src/core.cjs");
+  const rec = core.withStore(core.recordFromPages("p", ".txt", [
+    { page: 1, label: "part 1", text: "The warranty lasts two years from the date of purchase." },
+    { page: 2, label: "part 2", text: "The warranty does not cover damage from misuse or accidents." },
+    { page: 3, label: "part 3", text: "Warranty claims need the original receipt and serial number." },
+  ]));
+  const reader = core.createReaderCore({ apiKey: "test" });
+  await reader.load("p", async () => rec);
+  const question = "How long does the warranty last?";
+  // Every scored passage says no and "enough" is low, but one passage was skipped.
+  let restore = fakeJev((k) => (k === "p0" ? undefined : /^p\d/.test(k) || k === "enough" ? 0.05 : null));
+  const partial = await reader.ask({ question });
+  assert.strictEqual(partial.verdict, "unchecked", "not not_in_document");
+  assert.match(partial.check_note, /skipped 1 of 3 passages/);
+  assert.ok(partial.passages.some((p) => p.checked === false), "the skipped passage is returned, not dropped");
+  restore();
+  // With every passage scored, the same answers do mean not in the document.
+  restore = fakeJev((k) => (/^p\d/.test(k) || k === "enough" ? 0.05 : null));
+  assert.strictEqual((await reader.ask({ question })).verdict, "not_in_document");
+  restore();
+  // A skipped hidden-instruction check is marked on the passage.
+  restore = fakeJev((k) => (k === "i0" ? undefined : null));
+  assert.ok((await reader.ask({ question })).passages.some((p) => p.instruction_check === "not done"));
+  restore();
+});
+
+test("a spreadsheet question the check did not classify is never reported as absent", async () => {
+  const file = staffFile();
+  const reader = e.createReader({ apiKey: "test" });
+  await reader.load(file);
+  const restore = fakeJev((k) => (k === "calc" ? undefined : null));
+  const ranking = await reader.ask({ question: "Which company appears most often?" });
+  assert.strictEqual(ranking.verdict, "needs_calculation");
+  assert.match(ranking.note, /did not say whether this needs a calculation/);
+  assert.ok(ranking.suggested_calculate_args, "the plan is offered, not run");
+  const odd = await reader.ask({ question: "Tell me about zebras" });
+  assert.strictEqual(odd.verdict, "no_matching_text");
+  restore();
+  fs.unlinkSync(file);
+});
+
 test("a file still being read reports how far it has got", async () => {
   const core = require("../src/core.cjs");
   const reader = core.createReaderCore({ apiKey: "" });

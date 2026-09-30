@@ -88,6 +88,8 @@ async function loadFile(file) {
   const id = `${file.name}#${file.size}#${file.lastModified}#${mine}`;
   if (loaded) reader.forget(loaded.id);
   loaded = null;
+  shown = [];
+  shownFor = null;
   $("ask").disabled = true;
   $("results").innerHTML = "";
   $("about").hidden = true;
@@ -210,32 +212,40 @@ function download(name, text) {
   a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-let shown = [];
+// The answers on screen, and the file they belong to: a button only acts on
+// that file, and does nothing once another file has been chosen.
+let shown = [], shownFor = null;
 $("results").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button");
-  if (!b || !loaded) return;
+  if (!b || !loaded || loaded !== shownFor) return;
+  const doc = shownFor;
   const a = shown[Number(b.dataset.csv ?? b.dataset.more ?? b.dataset.run)];
   if (!a) return;
   try {
     if (b.dataset.csv != null) return download("reader-result.csv", csvOf(a.calculation));
     if (b.dataset.more != null) {
       b.disabled = true;
-      const full = await reader.calculate({ ...a.calculate_args, n: 1000, document: loaded.id });
+      const full = await reader.calculate({ ...a.calculate_args, n: 1000, document: doc.id });
+      if (loaded !== doc) return;
       return download("reader-full-list.csv", csvOf(full));
     }
     if (b.dataset.run != null) {
       // The visitor checked the suggested plan and chose to run it.
       b.disabled = true;
-      const r = await reader.calculate({ ...a.suggested_calculate_args, document: loaded.id });
+      const r = await reader.calculate({ ...a.suggested_calculate_args, document: doc.id });
+      if (loaded !== doc) return;
       const { answer, ...calculation } = r;
       a.calculation = calculation; a.calculate_args = a.suggested_calculate_args;
       b.insertAdjacentHTML("afterend", `<p class="calc"><b>${esc(answer)}</b></p>${calcTable(calculation, b.dataset.run)}`);
     }
-  } catch (err) { status(`Something went wrong: ${err.message}`, "bad"); }
+  } catch (err) { if (loaded === doc) status(`Something went wrong: ${err.message}`, "bad"); }
 });
 
 async function askAll() {
   if (!loaded) return;
+  // The file these questions are about. If another file is chosen before the
+  // answers arrive, they are dropped rather than shown under the new file.
+  const doc = loaded;
   const questions = $("questions").value.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, core.LIMITS.maxQuestions);
   if (!questions.length) { status("Type at least one question.", "bad"); return; }
   if (!$("key").value.trim()) { status("Add your OpenRouter key so Reader can check the passages.", "bad"); return; }
@@ -244,9 +254,11 @@ async function askAll() {
   status(`Asking ${questions.length} question${questions.length === 1 ? "" : "s"}…`);
   const t0 = performance.now();
   try {
-    const res = await reader.ask({ document: loaded.id, questions });
+    const res = await reader.ask({ document: doc.id, questions });
+    if (loaded !== doc) return;
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    const docTokens = loaded.sum.document_tokens;
+    const docTokens = doc.sum.document_tokens;
+    shownFor = doc;
     $("results").innerHTML = `
       <div class="summary">
         <div><b>${num(res.total_evidence_tokens)}</b><span>tokens of evidence</span></div>
@@ -274,9 +286,9 @@ async function askAll() {
       }).join("")}`;
     status(`Done. Your AI would read ${num(res.total_evidence_tokens)} tokens instead of ${num(docTokens)}.`, "good");
   } catch (err) {
-    status(`Something went wrong: ${err.message}`, "bad");
+    if (loaded === doc) status(`Something went wrong: ${err.message}`, "bad");
   } finally {
-    $("ask").disabled = false;
+    $("ask").disabled = !loaded;
   }
 }
 

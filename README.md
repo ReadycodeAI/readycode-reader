@@ -1,16 +1,16 @@
 # ReadyCode Reader (Readycode.AI)
 
-**Ask huge PDFs, Word documents and spreadsheets specific questions. Your AI gets only the passages that answer, with citations, instead of reading the whole file.**
+**Ask huge PDFs, Word documents and spreadsheets specific questions. Your AI gets the passages that answer, checked and cited, instead of reading the whole file.**
 
 [Website](https://readycode.ai/reader) · [Get updates and early access](https://readycode.ai/reader#get-started) · [Live browser demo](https://readycodeai.github.io/readycode-reader/) · [Install from npm](https://www.npmjs.com/package/@readycode/reader)
 
-[ReadyCode.AI](https://readycode.ai/reader) has contributed ReadyCode Reader - a free, open-source [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex and any other MCP client, and it also runs in a browser. It reads a file once on your computer. Then, for each question, it returns **only the passages that answer it**, with where they came from, plus checks on that evidence:
+[ReadyCode.AI](https://readycode.ai/reader) has contributed ReadyCode Reader - a free, open-source [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex and any other MCP client, and it also runs in a browser. It reads a file once on your computer. Then, for each question, it returns **the passages judged to answer it**, with where they came from, plus checks on that evidence:
 
 - **Not in the document:** if none of the passages checked supports an answer, your AI is told `not_in_document` instead of getting passages to guess from. If no passage even shares a word with the question, it is told `no_matching_text`, since the file may use other words.
-- **Passages disagree:** if two passages give different values, your AI is told to report both.
-- **Hidden instructions:** passages that try to instruct the AI reading them are flagged and treated as data only.
+- **Passages disagree:** when the check finds two relevant passages giving different values, your AI is told to report both.
+- **Hidden instructions:** passages the check judges to be instructing the AI reading them are flagged, so your AI treats them as data only.
 - **Exact spreadsheet calculations:** "how many…", "which … appears most often", totals, averages and "list everyone who…" are computed by code over every row and come back as numbers, with the sheets, column and conditions used. A model never estimates them.
-- **Exact matches first:** a spreadsheet row holding the exact name you asked about comes before look-alikes ("Nat Becker" before "Prof. Nat Becker II"), and rows show only the columns the question needs.
+- **Exact matches first:** a spreadsheet row holding the exact name you asked about comes before look-alikes ("Nat Becker" before "Prof. Nat Becker II"), and rows are trimmed to the columns the question names.
 
 ## Standard AI vs Reader
 
@@ -27,13 +27,15 @@ Token counts for Codex come from Codex's own session log. On the PDF that's **95
 
 ## Measured on large files
 
-Every expected answer below was checked by code against the file, and every "not in the document" question was checked to be truly absent. Scripts and question files are in [`benchmark/`](benchmark/).
+Every expected answer below was checked by code against the file, and every "not in the document" question was checked by code: its key words appear nowhere in the file. Scripts and question files are in [`benchmark/`](benchmark/).
 
 | File | Size as text | Correct | Tokens returned | Time for all questions | Check cost |
 |---|---|---|---|---|---|
-| NASA *Earth at Night* (PDF, 200 pages) | 42,306 tokens | 8/8 | 4,150 | 1.9 s | $0.0028 |
-| Australian Universities Accord Final Report (Word) | 263,691 tokens | 11/11 | 15,336 | 1.2 s | $0.0044 |
-| Sample contacts workbook (Excel, 100 MB, 1.1 million rows) | 271,424,159 tokens (estimate) | 11/11 | 2,494 | 3.3 s | $0.0022 |
+| NASA *Earth at Night* (PDF, 200 pages) | 42,306 tokens | 8/8 | 3,818 | 1.8 s | $0.0028 |
+| Australian Universities Accord Final Report (Word) | 263,691 tokens | 11/11 | 15,687 | 0.7 s | $0.0044 |
+| Sample contacts workbook (Excel, 100 MB, 1.1 million rows) | 271,424,159 tokens (estimate) | 11/11 | 2,494 | 2.4 s | $0.0022 |
+
+Tokens returned vary by a few percent from run to run, because the checker's relevance scores vary slightly; the scores above have been the same in every run.
 
 The Word report is larger than many AI context windows, and the spreadsheet is more than a hundred times larger than any. Each set includes questions the file cannot answer; Reader said `not_in_document` every time.
 
@@ -116,7 +118,7 @@ Each answer has a verdict:
 | `needs_calculation` | A calculation is needed but Reader could not confirm one that covers the whole question (for example "salary above 150" or "not at Acme"). It gives no number; it offers `suggested_calculate_args` for your AI to check, complete and run with `calculate`. |
 | `unchecked` | The check could not run (no key, or the service failed). Search results are returned as they are, and no calculation is run. |
 
-Very large files keep reading in the background: `load_document` may answer `still_reading` with how far it has got, and `ask_document` waits for the file to finish. `load_document` also reports what was read (every sheet and row, and anything skipped), so a "not in the document" answer can be trusted. `document_tokens` is an estimate of the whole file's size as text (about 3.5 characters per token), for comparison; it is not model usage.
+Very large files keep reading in the background: `load_document` may answer `still_reading` with how far it has got, and `ask_document` waits for the file to finish. `load_document` also reports what was read (every sheet and row, and anything skipped), so you can see what a "not in the document" answer covered. `document_tokens` is an estimate of the whole file's size as text (about 3.5 characters per token), for comparison; it is not model usage.
 
 ## Try it in your browser
 
@@ -125,7 +127,7 @@ The same engine runs in a web page: choose a file, add your OpenRouter key, ask.
 ## How it works
 
 1. **Read** on your computer: [pdf.js](https://mozilla.github.io/pdf.js/) for PDFs; Word sections follow its headings; Excel is streamed, so a 100 MB workbook uses about 650 MB of memory.
-2. **Split** into whole passages of about 1,200 characters, never cut mid-passage. Each spreadsheet row is one record, and identical records are returned once, with a note of where else they appear.
+2. **Split** at line breaks into passages of about 1,200 characters, so a passage usually holds whole lines and paragraphs; a single line longer than about 1,400 characters (common in some PDFs) is cut into pieces. Short text is kept. Each spreadsheet row is one record, and identical records are returned once, with a note of where else they appear.
 3. **Search** with a keyword index to find the 20 most likely passages.
 4. **Check** with one call to TypeSafe's Jev decision model. The checks are the same for every file and every question, filled in with your question:
    - does this passage actually answer it?
@@ -136,7 +138,7 @@ The same engine runs in a web page: choose a file, add your OpenRouter key, ask.
 
    Nothing is set up per document. The check costs about $0.0004 a question on your key and takes about a second.
 5. **Calculate** (spreadsheets): when a question needs every row, code runs the plan over the whole workbook. Values that differ only in capitals or spacing count as one, and rows can be counted as rows or as different people. A 1.1-million-row workbook takes about 1–2 seconds.
-6. **Return** only the passages that answer, most relevant first, with the verdicts and token counts. For "list everyone" questions in Word files, the headings of neighbouring sections come too, since a list often runs over several sections.
+6. **Return** the passages judged to answer, most relevant first, with the verdicts and token counts. For "list everyone" questions in Word files, the headings of neighbouring sections come too, since a list often runs over several sections.
 
 ## Limits (read these)
 

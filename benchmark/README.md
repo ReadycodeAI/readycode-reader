@@ -31,9 +31,11 @@ For a question that asks for a complete list, the headings Reader returns in `ne
 
 | File | Correct | Document tokens | Tokens returned | Load | All questions | Check cost |
 |---|---|---|---|---|---|---|
-| NASA PDF | 8/8 | 42,306 | 4,150 | 0.6 s | 1.9 s | $0.0028 |
-| Word report | 11/11 | 263,691 | 15,336 | under 1 s (cached) | 1.2 s | $0.0044 |
-| Excel workbook | 11/11 | 271,424,159 (estimate) | 2,494 | 14.7 s | 3.3 s | $0.0022 |
+| NASA PDF | 8/8 | 42,306 | 3,818 | under 1 s (cached) | 1.8 s | $0.0028 |
+| Word report | 11/11 | 263,691 | 15,687 | under 1 s (cached) | 0.7 s | $0.0044 |
+| Excel workbook | 11/11 | 271,424,159 (estimate) | 2,494 | 17.4 s | 2.4 s | $0.0022 |
+
+Tokens returned vary by a few percent between runs (the PDF has come to 3,818 and 4,150 tokens on the same code), because the checker's relevance scores vary slightly. The number of correct answers has not varied.
 
 On the workbook, the 8 lookups return only the columns each question needs (13–40 tokens each). The 3 calculations are exact:
 

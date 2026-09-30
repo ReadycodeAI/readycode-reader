@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1
+
+Fixes from a second independent audit, each with a regression test:
+
+- **Browser demo: answers stay with their file.** If another file is chosen while a question is running, the late answers are dropped instead of appearing under the new file. The result buttons act only on the file they belong to.
+- **A partial check never concludes absence.**
+  - When the checker skips some passages, Reader no longer answers `not_in_document`. The skipped passages come back marked `checked: false`, with a `check_note`.
+  - A passage whose hidden-instruction check was skipped is marked `instruction_check: "not done"`.
+  - A spreadsheet question the checker didn't classify is never reported as absent: it gets a suggested calculation or `no_matching_text`.
+- **Header rows need evidence.** A first row is used as column names only when most of its cells are label words (Name, City, Price…) or a column below holds a different kind of value (numbers, dates, emails). Otherwise it stays a record, and `load_document` says so and how to change it (`headers: "first_row"`).
+- **Text files** are cited by part (`where: "part 2"`), not as pages.
+- **Wording:** claims in the README and tool descriptions now match what Reader does. Long lines are split; passages are "judged to answer"; disagreement and hidden-instruction flags depend on the check.
+
 ## 0.2.0
 
 Fixes from an independent review, each with a regression test:
