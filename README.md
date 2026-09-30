@@ -2,7 +2,9 @@
 
 **Ask huge PDFs, Word documents and spreadsheets specific questions. Your AI gets only the passages that answer, with citations, instead of reading the whole file.**
 
-ReadyCode.AI has contributed ReadyCode Reader - a free, open-source [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex and any other MCP client, and it also runs in a browser. It reads a file once on your computer. Then, for each question, it returns **only the passages that answer it**, with where they came from, plus checks on that evidence:
+[Website](https://readycode.ai/reader) · [Live browser demo](https://readycodeai.github.io/readycode-reader/) · [Install from npm](https://www.npmjs.com/package/@readycode/reader)
+
+[ReadyCode.AI](https://readycode.ai/reader) has contributed ReadyCode Reader - a free, open-source [MCP](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex and any other MCP client, and it also runs in a browser. It reads a file once on your computer. Then, for each question, it returns **only the passages that answer it**, with where they came from, plus checks on that evidence:
 
 - **Not in the document:** if the file can't answer, your AI is told `not_in_document` instead of getting passages to guess from.
 - **Passages disagree:** if two passages give different values, your AI is told to report both.
