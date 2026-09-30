@@ -44,11 +44,21 @@ Neither app shows its exact billed tokens for these runs, so the token compariso
 
 **The honest reading:** agents with a terminal can write a streaming parser and answer everything, including exact counts, in a few minutes. Reader answered every lookup with sheet-and-row citations in two calls and no code. It grouped duplicate records, kept "Nat Becker" apart from "Prof. Nat Becker II", and refused to guess counts. For spreadsheets, Reader wins on ease and setup, not on raw speed, and it loses on counts until exact calculations exist.
 
+**Update, after these runs (our benchmark, not a re-run of the head-to-head):**
+
+Reader now calculates exactly. The same 11 questions score 11/11, with the 3 counts computed by code over all 1.1 million rows:
+
+- 9 rows at Smith-Hickle. Reader adds that they hold only 1 different name: the same person repeated.
+- 869 Floor Layer rows, 150 different people.
+- Roob Inc, 286 rows.
+
+Lookups now return only the columns a question needs, so the 8 lookups came to 193 tokens in all. The Word panel question now also returns the headings of neighbouring sections, which name all 7 other members, including Jenny Macklin, Fiona Nash and the two ex-officio members. The status of each requested improvement is below.
+
 **Improvements both AIs asked for, in priority order:**
 
-1. **Exact calculations:** count, distinct, top N and sums over whole columns. The person chooses all sheets or one, and rows or unique people; the answer comes back as a number with the sheet and column.
-2. **Exact field matches first:** exact name or email matches ahead of partial word matches, with near-matches clearly separated.
-3. **Return only the relevant columns:** a phone question needs the name, the phone and the source, not long Text and Description cells.
-4. **Load progress:** `still_reading` should say how far along it is.
-5. **Explain the token figures:** `document_tokens` estimates the file's size as text (about 3.5 characters per token); it is not model usage.
-6. **Coverage report:** say which sheets and how many rows were read, and anything skipped, so an absence result can be trusted.
+1. **Exact calculations:** count, distinct, top N and sums over whole columns. The person chooses all sheets or one, and rows or unique people; the answer comes back as a number with the sheet and column. *Done: `ask_document` answers these with verdict `calculated`, and the new `calculate` tool takes explicit plans.*
+2. **Exact field matches first:** exact name or email matches ahead of partial word matches, with near-matches clearly separated. *Done: rows are marked `match: exact` or `partial`.*
+3. **Return only the relevant columns:** a phone question needs the name, the phone and the source, not long Text and Description cells. *Done: `columns_shown` says which.*
+4. **Load progress:** `still_reading` should say how far along it is. *Done: sheet, rows read and percent.*
+5. **Explain the token figures:** `document_tokens` estimates the file's size as text (about 3.5 characters per token); it is not model usage. *Done: `document_tokens_note`.*
+6. **Coverage report:** say which sheets and how many rows were read, and anything skipped, so an absence result can be trusted. *Done: `coverage` on load, and `searched` on spreadsheet "not in the document" answers.*

@@ -28,10 +28,20 @@
     "claude-code",
     "cursor",
     "codex",
-    "openrouter"
+    "openrouter",
+    "excel",
+    "spreadsheet",
+    "word"
   ],
   "author": "ReadyCode (https://readycode.ai)",
   "homepage": "https://readycode.ai/reader",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ReadycodeAI/readycode-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ReadycodeAI/readycode-reader/issues"
+  },
   "license": "Apache-2.0",
   "dependencies": {
     "pdfjs-dist": "^6.3.289"

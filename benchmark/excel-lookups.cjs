@@ -33,9 +33,12 @@ const { run } = require("./run.cjs");
   const company = pick().Company, title = pick()["Job Title"];
   questions.push({ q: `How many people in the file work at ${company}?`, calc: true, truth: where("Company", company).length });
   questions.push({ q: `List everyone whose job title is ${title}.`, calc: true, truth: where("Job Title", title).length });
-  questions.push({ q: "Which company appears most often in the spreadsheet?", calc: true });
+  const counts = new Map();
+  for (let r = 0; r < N; r++) { const c = row(r).Company; if (c) counts.set(c, (counts.get(c) || 0) + 1); }
+  const [topValue, topRows] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  questions.push({ q: "Which company appears most often in the spreadsheet?", calc: true, top: { value: topValue, rows: topRows } });
   const r = await run({ document: { title: `${file.split(/[\\/]/).pop()}: ${N.toLocaleString("en")} rows` }, questions }, file);
-  for (const row of r.rows) console.log(`${row.ok ? "PASS" : "FAIL"}  ${row.question}\n      ${row.verdict}, ${row.evidence_tokens} tokens`);
+  for (const row of r.rows) console.log(`${row.ok ? "PASS" : "FAIL"}  ${row.question}\n      ${row.verdict}, ${row.evidence_tokens} tokens${row.answer ? `\n      ${row.answer}${row.expected ? ` (expected ${row.expected})` : ""}` : ""}`);
   console.log(`\n${r.document}\n${r.correct} correct | document ${r.document_tokens.toLocaleString("en")} tokens | evidence ${r.evidence_tokens.toLocaleString("en")} tokens | load ${r.load_seconds} s | ${r.rows.length} questions ${r.ask_seconds} s | checks $${r.check_cost_usd}`);
   process.exitCode = r.rows.every((x) => x.ok) ? 0 : 1;
 })().catch((err) => { console.error(err.message); process.exit(1); });

@@ -6,7 +6,7 @@
   "questions": [
     { "q": "How many recommendations does the Final Report make?", "expect": ["47 recommendations"] },
     { "q": "Who chaired the Australian Universities Accord Review Panel?", "expect": ["Mary O’Kane"] },
-    { "q": "Who else was on the Review Panel besides the chair?", "expect": ["Larissa Behrendt", "Shemara Wikramanayake"] },
+    { "q": "Who else was on the Review Panel besides the chair?", "expect": ["Larissa Behrendt", "Shemara Wikramanayake", "Barney Glover", "Jenny Macklin", "Fiona Nash", "Tony Cook", "Ben Rimmer"] },
     { "q": "What tertiary attainment target does the report set for the working-age population by 2050?", "expect": ["80% by 2050"] },
     { "q": "What share of Australians aged 25 to 34 should be university educated by 2050?", "expect": ["55% by 2050"] },
     { "q": "What change to the timing of HELP indexation does the report propose?", "expect": ["deduct compulsory repayments first"] },

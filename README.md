@@ -7,7 +7,8 @@ ReadyCode Reader is a free, open-source [MCP](https://modelcontextprotocol.io) s
 - **Not in the document:** if the file can't answer, your AI is told `not_in_document` instead of getting passages to guess from.
 - **Passages disagree:** if two passages give different values, your AI is told to report both.
 - **Hidden instructions:** passages that try to instruct the AI reading them are flagged and treated as data only.
-- **Needs a calculation:** spreadsheet questions like "how many…" or "list every…" are flagged instead of being estimated from a few rows.
+- **Exact spreadsheet calculations:** "how many…", "which … appears most often", totals, averages and "list everyone who…" are computed by code over every row and come back as numbers, with the sheets, column and conditions used. A model never estimates them.
+- **Exact matches first:** a spreadsheet row holding the exact name you asked about comes before look-alikes ("Nat Becker" before "Prof. Nat Becker II"), and rows show only the columns the question needs.
 
 ## Standard AI vs Reader
 
@@ -17,8 +18,10 @@ Same questions, same AI, fresh sessions: once the normal way (the AI reads the f
 |---|---|---|
 | **Codex**, 200-page NASA PDF, 8 questions | 8/8 correct · **913,468 tokens** · about 3 min | 8/8 correct · **41,997 tokens** · about 20 s |
 | **Grok 4.7 in Cursor**, same PDF | 8/8 correct · read the whole book (about 45,000 tokens) · about 4 min | 8/8 correct · **4,693 tokens** of evidence · about 2 min |
+| **Codex** and **Grok 4.7 in Cursor**, 263,000-token Word report, 11 questions | 11/11 · 4–5 tool calls · 2–4 min · no citations | 11/11 · 2 calls · 30 s–1 min · section and paragraph on every answer |
+| **Codex** and **Grok 4.7 in Cursor**, 100 MB Excel workbook (1.1 million rows), 11 questions | 11/11 · wrote its own parser script · 7 steps | 8/8 lookups in 2 calls, no code; declined the 3 counting questions (since fixed, see below) |
 
-Token counts for Codex come from Codex's own session log. That's **95% fewer tokens and about 9× faster** for the same answers. Most of the saving comes from steps: an agent re-sends its whole conversation at every step, and with Reader it needed 2 steps instead of 17.
+Token counts for Codex come from Codex's own session log. On the PDF that's **95% fewer tokens and about 9× faster** for the same answers. Most of the saving comes from steps: an agent re-sends its whole conversation at every step, and with Reader it needed 2 steps instead of 17. On the Word report the gain was speed, fewer steps and citations rather than tokens. Full results: [`benchmark/head-to-head.md`](benchmark/head-to-head.md).
 
 ## Measured on large files
 
@@ -26,13 +29,21 @@ Every expected answer below was checked by code against the file, and every "not
 
 | File | Size as text | Correct | Tokens returned | Time for all questions | Check cost |
 |---|---|---|---|---|---|
-| NASA *Earth at Night* (PDF, 200 pages) | 42,282 tokens | 8/8 | 3,487 | 2.3 s | $0.0027 |
-| Australian Universities Accord Final Report (Word) | 263,487 tokens | 11/11 | 15,790 | 1.7 s | $0.0042 |
-| Sample contacts workbook (Excel, 100 MB, 1.1 million rows) | 271,424,159 tokens | 11/11 | 2,323 | 0.9 s | $0.0038 |
+| NASA *Earth at Night* (PDF, 200 pages) | 42,282 tokens | 8/8 | 3,487 | 1.6 s | $0.0027 |
+| Australian Universities Accord Final Report (Word) | 263,487 tokens | 11/11 | 14,991 | 1.1 s | $0.0044 |
+| Sample contacts workbook (Excel, 100 MB, 1.1 million rows) | 271,424,159 tokens (estimate) | 11/11 | 2,494 | 2.4 s | $0.0022 |
 
-The Word report is larger than many AI context windows, and the spreadsheet is more than a hundred times larger than any. Each set includes questions the file cannot answer; Reader said `not_in_document` every time. On the spreadsheet it also declined 3 counting and ranking questions rather than guess.
+The Word report is larger than many AI context windows, and the spreadsheet is more than a hundred times larger than any. Each set includes questions the file cannot answer; Reader said `not_in_document` every time.
 
-Honest limits of these results: they are our own runs on three files, not an independent study, and head-to-head runs against a standard AI exist so far only for the PDF.
+On the spreadsheet, 8 questions are lookups. Each is answered with only the name and the column asked about, 13–40 tokens each. The other 3 are exact calculations over all 1.1 million rows:
+
+- "How many people work at Smith-Hickle?": 9 rows, and Reader adds that they hold only 1 different name.
+- "List everyone whose job title is Floor Layer": 869 rows, 150 different people, listed.
+- "Which company appears most often?": Roob Inc, 286 rows.
+
+In the Word set, "Who else was on the panel?" needs all 7 other members, including two ex-officio members found only through section headings.
+
+Honest limits of these results: they are our own runs on three files, not an independent study. The head-to-head runs above were made before exact calculations existed and have not been re-run since.
 
 ## Install (MCP)
 
@@ -64,7 +75,7 @@ args = ["-y", "@readycode/reader"]
 
 **Claude Desktop**: add the same entry as Cursor under `mcpServers` in `claude_desktop_config.json`.
 
-Restart your tool and check that `readycode-reader` shows three tools: `load_document`, `ask_document` and `list_documents`.
+Restart your tool and check that `readycode-reader` shows four tools: `load_document`, `ask_document`, `calculate` and `list_documents`.
 
 ## Use
 
@@ -76,9 +87,22 @@ Your AI loads the file, sees its contents, asks Reader specific questions and an
 
 - `load_document(path)` reads a PDF, Word (.docx), Excel (.xlsx), TXT, Markdown, CSV or JSON file. It returns the file's size and **its contents**: a PDF's bookmarks with page numbers, the Word headings, or a spreadsheet's sheets, columns and an example row. That tells the AI what the file covers before it asks anything.
 - `ask_document(questions: [...])` asks up to 20 questions in one call. Each answer carries its passages with page numbers (and printed page numbers), Word sections and paragraphs, or spreadsheet sheet and row.
+- `calculate(operation, column, where, sheet, unique_by, n)` runs an exact calculation over a loaded spreadsheet: `count`, `distinct`, `top` (most or fewest), `sum`, `average`, `min`, `max` or `list`. It takes conditions (equals, contains, not equals, above, below), one sheet or all, and can count people instead of rows (`unique_by: "Name"`). You rarely need it: `ask_document` turns plainly worded questions into these plans, has each plan checked against the question, and answers with verdict `calculated`.
 - `list_documents()` lists what is loaded.
 
-Very large files keep reading in the background: `load_document` may answer `still_reading`, and `ask_document` waits for the file to finish.
+A calculated answer looks like this:
+
+```json
+{ "question": "How many people in the file work at Smith-Hickle?", "verdict": "calculated",
+  "answer": "9 rows where Company is \"Smith-Hickle\" in all 4 sheets, holding 1 different Name value.",
+  "plan": "Count the rows where Company is \"Smith-Hickle\" in all sheets, and count the different Name values among them.",
+  "calculation": { "operation": "count", "unique_by": "Name", "where": ["Company is \"Smith-Hickle\""], "sheets": "all",
+    "rows_checked": 1116271, "matching_rows": 9,
+    "matching_rows_by_sheet": { "Worksheet (2)": 0, "Worksheet (3)": 0, "Tablo3": 1, "Worksheet": 8 },
+    "result": 9, "unique": 1, "method": "Computed by code over every row; nothing estimated." } }
+```
+
+Very large files keep reading in the background: `load_document` may answer `still_reading` with how far it has got, and `ask_document` waits for the file to finish. `load_document` also reports what was read (every sheet and row, and anything skipped), so a "not in the document" answer can be trusted. `document_tokens` is an estimate of the whole file's size as text (about 3.5 characters per token), for comparison; it is not model usage.
 
 ## Try it in your browser
 
@@ -94,17 +118,18 @@ The same engine runs in a web page: choose a file, add your OpenRouter key, ask.
    - is there enough here to answer it?
    - do these passages disagree?
    - does any passage try to instruct the AI?
-   - for spreadsheets, does it need a calculation over every row?
+   - for spreadsheets, does it need a calculation over every row, and does the calculation plan Reader made fit the question?
 
    Nothing is set up per document. The check costs about $0.0004 a question on your key and takes about a second.
-5. **Return** only the passages that answer, most relevant first, with the verdicts and token counts.
+5. **Calculate** (spreadsheets): when a question needs every row, code runs the plan over the whole workbook. Values that differ only in capitals or spacing count as one, and rows can be counted as rows or as different people. A 1.1-million-row workbook takes about 1–2 seconds.
+6. **Return** only the passages that answer, most relevant first, with the verdicts and token counts. For "list everyone" questions in Word files, the headings of neighbouring sections come too, since a list often runs over several sections.
 
 ## Limits (read these)
 
 - **Picture-only pages** (scans, images) have no text to search and are listed as such; pictures inside Word files are counted, not read. Reading them needs a vision model; that's planned.
 - **Summaries of a whole document** are a different job. Reader answers specific questions.
-- **Spreadsheet calculations** (counts, totals, averages, rankings, "list every row that…") are flagged, not answered. Exact calculations are planned.
-- **The "passages disagree" check** sometimes fires when passages don't really disagree. Treat it as "double-check these sources".
+- **Spreadsheet calculations** cover counts, distinct values, rankings, totals, averages, lowest and highest values, and lists, with simple conditions. Formulas, pivot tables, date ranges and combining sheets with different columns are not supported yet. When Reader can't turn a question into a plan it is sure of, it answers `needs_calculation` rather than guess, and your AI can call `calculate` directly.
+- **The "passages disagree" check** now needs two relevant passages about the same thing, but it can still fire when passages don't really disagree. Treat it as "double-check these sources".
 - **Old formats** (`.doc`, `.xls`, `.xlsb`) aren't supported; save them as `.docx` or `.xlsx`.
 - **It depends on Jev.** If the decision model is unavailable, Reader still returns the top search results, marked `unchecked`.
 - **Check the passages.** Every answer comes with its sources so you can.
@@ -120,4 +145,6 @@ The same engine runs in a web page: choose a file, add your OpenRouter key, ask.
 
 Apache-2.0. Built by [ReadyCode](https://readycode.ai). If you build on it, keep the NOTICE file, and we'd love a link back. "ReadyCode" is our name; please don't use it for forks.
 
-**More tools from ReadyCode, and early access to the hosted version:** [readycode.ai](https://readycode.ai)
+**Source:** [github.com/ReadycodeAI/readycode-reader](https://github.com/ReadycodeAI/readycode-reader). Issues and ideas are welcome there.
+
+**News about Reader and new ReadyCode tools, and early access to the hosted version:** [readycode.ai/reader](https://readycode.ai/reader)

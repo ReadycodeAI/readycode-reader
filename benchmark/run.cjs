@@ -8,7 +8,9 @@
 //   expect: every expected phrase is in the passages Reader returned (and the
 //           file really contains them, checked first);
 //   absent: Reader says not_in_document (and the file really lacks the words);
-//   calc:   Reader says needs_calculation.
+//   calc:   with truth (a row count) or top ({ value, rows }), Reader calculates
+//           exactly that; without either, it declines (needs_calculation) or
+//           calculates.
 const fs = require("fs");
 const path = require("path");
 const engine = require("../src/engine.cjs");
@@ -42,12 +44,17 @@ async function run(spec, file) {
   let pass = 0;
   const rows = res.answers.map((a, i) => {
     const q = spec.questions[i];
-    const got = a.passages.map((p) => p.text).join("\n");
+    // Headings of nearby sections count too: for a list they name the items.
+    const got = [...a.passages.map((p) => p.text), ...(a.nearby_sections || [])].join("\n");
+    const c = a.calculation;
     const ok = q.absent ? a.verdict === "not_in_document"
-      : q.calc ? a.verdict === "needs_calculation"
+      : q.calc ? (q.truth != null ? a.verdict === "calculated" && c.matching_rows === q.truth
+        : q.top ? a.verdict === "calculated" && c.operation === "top" && c.result[0].value === q.top.value && c.result[0].rows === q.top.rows
+          : ["needs_calculation", "calculated"].includes(a.verdict))
         : ["answer_from_passages", "low_confidence"].includes(a.verdict) && q.expect.every((phrase) => has(got, phrase));
     pass += ok;
-    return { ok, question: q.q, verdict: a.verdict, evidence_tokens: a.evidence_tokens };
+    const expected = q.truth != null ? `${q.truth} rows` : q.top ? `${q.top.value}, ${q.top.rows} rows` : null;
+    return { ok, question: q.q, verdict: a.verdict, evidence_tokens: a.evidence_tokens, ...(a.answer ? { answer: a.answer } : {}), ...(expected ? { expected } : {}) };
   });
   return { document: spec.document.title, correct: `${pass}/${rows.length}`, document_tokens: res.document_tokens, evidence_tokens: res.total_evidence_tokens, load_seconds: Number(loadSeconds.toFixed(1)), ask_seconds: Number(askSeconds.toFixed(1)), check_cost_usd: Number(cost.toFixed(4)), rows };
 }

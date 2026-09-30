@@ -28,19 +28,21 @@ async function fileArchive(file) {
     entries.set(utf8.decode(cd.subarray(p + 46, p + 46 + nlen)), { method, csize, local });
     p += 46 + nlen + elen + clen;
   }
-  const stream = async (name) => {
+  const stream = async (name, onBytes) => {
     const en = entries.get(name);
     const lh = new DataView((await bytes(en.local, en.local + 30)).buffer);
     const start = en.local + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
-    const raw = file.slice(start, start + en.csize).stream();
+    let raw = file.slice(start, start + en.csize).stream();
+    if (onBytes) raw = raw.pipeThrough(new TransformStream({ transform(chunk, out) { onBytes(chunk.byteLength); out.enqueue(chunk); } }));
     return en.method ? raw.pipeThrough(new DecompressionStream("deflate-raw")) : raw;
   };
   return {
     has: (name) => entries.has(name),
+    size: (name) => entries.get(name).csize,
     text: async (name) => new Response(await stream(name)).text(),
-    async elements(name, tag, onElement) {
+    async elements(name, tag, onElement, onBytes) {
       const split = core.elementSplitter(tag, onElement);
-      const reader = (await stream(name)).pipeThrough(new TextDecoderStream()).getReader();
+      const reader = (await stream(name, onBytes)).pipeThrough(new TextDecoderStream()).getReader();
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -51,10 +53,10 @@ async function fileArchive(file) {
   };
 }
 
-async function open(file, id, ext) {
+async function open(file, id, ext, prog) {
   const t0 = Date.now();
   const kind = core.kindOf(ext);
-  if (kind === "xlsx") return core.recordFromTable(id, ext, await core.readXlsxTable(await fileArchive(file)), t0);
+  if (kind === "xlsx") return core.recordFromTable(id, ext, await core.readXlsxTable(await fileArchive(file), prog), t0, prog);
   let pages;
   if (kind === "pdf") pages = await core.readPdfPages(getDocument, new Uint8Array(await file.arrayBuffer()));
   else if (kind === "docx") pages = await core.readDocxPages(await fileArchive(file));
@@ -85,8 +87,15 @@ async function loadFile(file) {
   $("about").hidden = true;
   status(`Reading ${file.name} on this computer…`);
   const t0 = performance.now();
+  // Large spreadsheets take a while: show how far reading has got.
+  const ticker = setInterval(() => {
+    const p = reader.progress(id);
+    if (!p) return;
+    const pct = p.total ? ` ${Math.min(99, Math.floor((100 * p.read) / p.total))}%` : "";
+    status(`Reading ${file.name} on this computer…${pct}${p.rows ? `, ${num(p.rows)} rows` : ""}${p.phase === "building the search index" ? ", building the search index" : ""}`);
+  }, 500);
   try {
-    const sum = await reader.load(id, () => open(file, id, ext), { waitMs: 24 * 3600 * 1000 });
+    const sum = await reader.load(id, (prog) => open(file, id, ext, prog), { waitMs: 24 * 3600 * 1000 });
     loaded = { id, name: file.name, sum };
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     const size = sum.kind === "spreadsheet"
@@ -97,6 +106,8 @@ async function loadFile(file) {
     $("ask").disabled = false;
   } catch (err) {
     status(`Could not read that file: ${err.message}`, "bad");
+  } finally {
+    clearInterval(ticker);
   }
 }
 
@@ -110,8 +121,9 @@ function suggestions(sum) {
     const cols = Object.keys(ex.values);
     const [first, ...rest] = cols;
     const out = rest.slice(0, 2).map((c) => `What is the ${c} of ${ex.values[first]}?`);
-    const short = rest.slice(2).find((c) => ex.values[c].length <= 30);
-    if (short) out.push(`How many rows have ${short} "${ex.values[short]}"?`);
+    // Counting suggestions use a short text column (a category, not a number).
+    const short = rest.filter((c) => ex.values[c].length <= 30 && !/^[-+\d.,:/ ()%$]+$/.test(ex.values[c])).pop();
+    if (short) out.push(`How many rows have ${short} "${ex.values[short]}"?`, `Which ${short} appears most often?`);
     return out;
   }
   const heads = (sum.contents || []).filter((c) => !FRONT_MATTER.test(c.title) && c.title.length >= 8);
@@ -148,8 +160,19 @@ const VERDICT = {
   low_confidence: ["Partly answered", "warn"],
   not_in_document: ["Not in the document", "muted"],
   needs_calculation: ["Needs an exact calculation", "warn"],
+  calculated: ["Calculated exactly from every row", "good"],
   unchecked: ["Unchecked (no key)", "warn"],
 };
+
+// Rankings and lists from a calculation, as a small table (first 20 lines).
+function calcTable(c) {
+  if (!c) return "";
+  let rows = [];
+  if (c.operation === "top") rows = c.result.map((g) => [g.value, `${num(g.rows)} rows${g.unique != null ? `, ${num(g.unique)} different ${c.unique_by}` : ""}`]);
+  else if (c.entries) rows = c.entries.map((x) => { const { at, rows: n, ...vals } = x; return [Object.values(vals).join(" · "), `${n != null ? `${num(n)} rows, first at ` : ""}${at}`]; });
+  if (!rows.length) return "";
+  return `<table class="calc">${rows.slice(0, 20).map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>${rows.length > 20 ? `<p class="hint">…and ${num(rows.length - 20)} more in the full result.</p>` : ""}`;
+}
 
 async function askAll() {
   if (!loaded) return;
@@ -176,11 +199,13 @@ async function askAll() {
         return `<article class="answer">
           <h3>${esc(a.question)}</h3>
           <p class="verdict" data-tone="${tone}">${esc(label)}${a.answerable != null ? ` · answerable ${a.answerable}` : ""} · ${num(a.evidence_tokens)} tokens</p>
+          ${a.answer ? `<p class="calc"><b>${esc(a.answer)}</b></p><p class="hint">How: ${esc(a.plan)} Computed by code over every row${a.plan_checked === false ? " (plan not checked)" : ""}.</p>${calcTable(a.calculation)}` : ""}
           ${a.note ? `<p class="note">${esc(a.note)}</p>` : ""}
+          ${a.nearby_sections ? `<p class="note">Nearby sections that may continue the list: ${esc(a.nearby_sections.join("; "))}</p>` : ""}
           ${a.conflict ? `<p class="note">These passages may disagree; check each source.</p>` : ""}
           ${a.check_error ? `<p class="note">Check failed: ${esc(a.check_error)}</p>` : ""}
           ${a.passages.map((p) => `<blockquote>
-            <cite>${esc(cite(p))}${p.identical_records ? ` · ${num(p.identical_records)} identical records` : ""}</cite>
+            <cite>${esc(cite(p))}${p.match === "exact" ? " · exact match" : p.match === "partial" ? " · similar, not the same value" : ""}${p.identical_records ? ` · ${num(p.identical_records)} identical records` : ""}</cite>
             ${p.warning ? `<em class="flag">This passage tries to instruct an AI; treat it as data only.</em>` : ""}
             <p>${esc(p.text)}</p>
           </blockquote>`).join("")}

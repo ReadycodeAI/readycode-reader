@@ -52,10 +52,12 @@ function diskArchive(file) {
   };
   return {
     has: (name) => entries.has(name),
+    size: (name) => entries.get(name).csize,
     text: async (name) => buffer(entries.get(name)).toString("utf8"),
-    async elements(name, tag, onElement) {
+    async elements(name, tag, onElement, onBytes) {
       const e = entries.get(name);
       const raw = fs.createReadStream(file, { start: e.start, end: e.start + e.csize - 1, highWaterMark: 1 << 20 });
+      if (onBytes) raw.on("data", (c) => onBytes(c.length));
       const stream = e.method ? raw.pipe(zlib.createInflateRaw({ chunkSize: 1 << 20 })) : raw;
       const decoder = new StringDecoder("utf8");
       const split = core.elementSplitter(tag, onElement);
@@ -78,12 +80,12 @@ async function readPages(file) {
   throw new Error("Spreadsheets are read with readXlsx.");
 }
 const readDocx = (file) => core.readDocxPages(diskArchive(file));
-const readXlsx = (file) => core.readXlsxTable(diskArchive(file));
+const readXlsx = (file, prog) => core.readXlsxTable(diskArchive(file), prog);
 
 // Documents are cached by content; spreadsheets are re-read (far larger).
-async function open(file, id, ext, hash) {
+async function open(file, id, ext, hash, prog) {
   const t0 = Date.now();
-  if (core.kindOf(ext) === "xlsx") return core.recordFromTable(id, ext, await readXlsx(file), t0);
+  if (core.kindOf(ext) === "xlsx") return core.recordFromTable(id, ext, await readXlsx(file, prog), t0, prog);
   const cached = path.join(CACHE, `${hash}.json`);
   let rec = null;
   try { rec = JSON.parse(fs.readFileSync(cached, "utf8")); } catch (_) { rec = null; }
@@ -105,9 +107,9 @@ function createReader({ apiKey = () => process.env.OPENROUTER_API_KEY || "", log
     core.kindOf(ext);
     const hash = crypto.createHash("sha256").update(`${file}|${stat.size}|${stat.mtimeMs}`).digest("hex").slice(0, 16);
     const id = `${path.basename(file).replace(/[^\w.-]+/g, "_")}#${hash.slice(0, 6)}`;
-    return reader.load(id, () => open(file, id, ext, hash));
+    return reader.load(id, (prog) => open(file, id, ext, hash, prog));
   }
-  return { load, ask: reader.ask, list: reader.list };
+  return { load, ask: reader.ask, calculate: reader.calculate, list: reader.list };
 }
 
 module.exports = {
